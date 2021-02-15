@@ -25,8 +25,6 @@ key_wait2:
 		rjmp	key_wait2
 int0_irq_wdt_wait:											;czekaj na reset od wdt
 		rjmp	disp_phase									;albo nie czekaj :)
-		;rjmp 	int0_irq_wdt_wait
-
 int1_irq:
 		rcall	phase_plus
 		rcall	phase_write
@@ -63,11 +61,6 @@ phase_write:
 		sts		phaseRam+0,r16
 		com		r16
 		sts		phaseRam+3,r16
-
-;rcall usart_nl
-;ldi	r16, '%'
-;rcall usartsend
-
 		rcall	NVRAMwrite
 ret
 
@@ -82,10 +75,6 @@ phase_read:													;spradzanie 1 kopii na spojnosc danych
 		brsh	fault
 record_ok:
 		mov 	Phase,r16
-	;	rcall	phase_write
-;rcall usart_nl
-;mov r16,r18
-;rcall usartsend_hex
 ret
 
 fault:	

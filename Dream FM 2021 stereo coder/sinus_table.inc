@@ -238,7 +238,7 @@
  .EQU	SIN64=0b00010010;10
  .EQU	SIN65=0b00010001;9
  .EQU	SIN66=0b00010000;8
- ;ponizej 8 nie trzeba pzesowac bitow
+ ;ponizej 8 nie trzeba przesowac bitow
  .EQU	SIN67=7
  .EQU	SIN68=5
  .EQU	SIN69=4

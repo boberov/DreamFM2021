@@ -20,25 +20,22 @@ code_table:
 .db 0x1B,0x5B,0x41,0x00,0x00,0x00							;curDown
 .dw curUp_key	
 .db 0x1B,0x5B,0x31,0x31,0x7E,0x00							;F1
-.dw f1_key
 .db 0x1B,0x5B,0x31,0x32,0x7E,0x00							;F2
-.dw f2_key	
 .db 0x1B,0x5B,0x31,0x33,0x7E,0x00							;F3
-.dw f3_key	
 .db 0x1B,0x5B,0x31,0x34,0x7E,0x00							;F4
-.dw f4_key	
 .db 0x1B,0x5B,0x31,0x35,0x7E,0x00							;F5
-.dw f5_key		
+.db 0x1B,0x5B,0x31,0x37,0x7E,0x00							;F6
+.db 0x1B,0x5B,0x31,0x38,0x7E,0x00							;F7
+.db 0x1B,0x5B,0x31,0x39,0x7E,0x00							;F8
 .db 0x1B,0x5B,0x32,0x30,0x7E,0x00							;F9
-.dw f9_key
+.db 0x1B,0x5B,0x32,0x31,0x7E,0x00							;F10
 .db 0x1B,0x5B,0x32,0x33,0x7E,0x00							;F11
-.dw default_ret	
 .db 0x1B,0x5B,0x32,0x34,0x7E,0x00							;F12
-.dw default_ret
+
 */
 
 ;pamietaj 6B+2B adresu na index
-.db "SCctl",0x01									
+.db "SCctl",0x01											;0x01 = oczekiwanie na parametr a rozkazem									
 .dw change_mode
 .db "SCpha",0x01									
 .dw change_phase
@@ -52,15 +49,15 @@ code_table:
 ;-----------------------------------------------------------
 URX_irq:
 ;usart_rx_write:		
-		in		r2,sreg										;nic nie odkladane, bo powrot w miejsce gdzie stos resetowany
-		push		r16
+;		in		r2,sreg										;nic nie odkladane, bo powrot w miejsce gdzie stos resetowany
+;		push		r16
 
-;		in	 	r16,USR										;jesli pooling
+;		in	 	r16,USR										;jesli pooling to sprawdzanie flagi
 ;		sbrs 	r16,RXC
 ;		rjmp 	USART_no_CharRX
 
-		push 	r30
-		push 	r31
+;		push 	r30
+;		push 	r31
 		clr		URXtoutCh	
 		clr		URXtoutCl									;timeot odbioru danych
 
@@ -71,13 +68,11 @@ URX_irq:
 		add		r30,r16
 		adc		r31,zero
 
-		in	 	r16,UDR
-	
+		in	 	r16,UDR	
 
 		cpi		r16,LF_CHAR									;line feed wymusza przeparsowanie linii
 		brne	no_lineend									;uwaga bajt konca linii nie jest wpisywany do bufora
-		ldi		r16,LF_Tout-1
-		mov		URXtoutCh,r16
+		ldiw	URXtoutCl,URXtoutCh,LF_Tout-1
 		rjmp	retur_0		
 no_lineend:	
 		st		z,r16
@@ -87,49 +82,44 @@ no_lineend:
 		sts		URXpWR,r16
 retur_0:
 		clear	autoMonTO									;timeout automono zerowany jesli jakis znak odebrany
-		pop		r31
-		pop		r30
+;		pop		r31
+;		pop		r30
 USART_no_CharRX:
-		pop 	r16
-		out 	sreg,r2
-	rjmp	mode_select
-reti
+;		pop 	r16
+;		out 	sreg,r2
+	rjmp	mode_select										;naprawa fazy sygnalu
+;reti
 ;-----------------------------------------------------------
 
 .macro usartRXproc
 ;usart_rx_buffer:
-;-------------------timeout---------------------------------;ta sekcja musi miec staly czas wykonania
-		;incrs	URXtoutC									;5CK
-		;lds r16,URXtoutC
-		;inc 	URXtoutCl
-	;	brne	
-		add		URXtoutCl,one								;1CK
-
-		adc		URXtoutCh,zero								;1CK
-		brcc 	pc+2										;1CK
-		dec		URXtoutCh									;1CK
-
-		brcc 	pc+2										;1CK
-		dec		URXtoutCl									;1CK
-
-		cpi		URXtoutCh,LF_Tout							;1CK timeout z URXtoutC
+;-------------------timeout---------------------------------;ta sekcja musi miec staly czas wykonania bo znajduje sie w petli generatora	
+		nop													;1CK
+		adiw	URXtoutCl,1									;2CK
+		brcs	t_compens									;T2/F1
+		cpiw	URXtoutCl,URXtoutCh,LF_Tout					;4CK timeout z URXtoutC
 		brne	nochar_in_buf								;2CK po odebraniu bajtu usartem czekany czas timeout zanim sciagany bufor
 ;-----------------------------------------------------------
 
-;----------------odbior klawiszy----------------------------															
+;----------------odbior danych RX---------------------------															
 		lds		r19,URXpWR
 		lds		r20,URXpRD
-
 		cp		r19,r20
 		breq	noma	
+
 		rcall	compare_string_buf							;tu jest ladowany adres do Z dla ijmp
 		brne	noma										;sprawdzany sreg, czy rozpoznany string z bufora
+;		cli
 		sts		URXpRD,r19
-nothesame_key:
+;nothesame_key:
 		ijmp	
 noma:														;wszystko wyciagnieto z bufora
 		sts		URXpRD,r19									;wskaznik bufora odczytu = bufora zapisu
-	rjmp	mode_select
+	rjmp	mode_select										;powrot do synchronizera
+	;rjmp nochar_in_buf
+t_compens:
+		sbiw	URXtoutCl,1									;2CK
+		nops	3											;3CK
 nochar_in_buf:
 ;ret
 .endm
@@ -141,7 +131,8 @@ nochar_in_buf:
 ;dodatnkowo obsluga 7B parametru dla wybranych rozkazow
 ;-----------------------------------------------------------
 compare_string_buf:
-	
+;ldi r16,'&'
+;rcall	usartsend
 		clr		r4											;licznik ilosci bajtow parametru
 															;pamietac nalezy, ze dluzsze ciagi o takim samym poczatku jak krotkie musza byc porownywane wczesniej aby zostaly rozpoznane
 		ldi 	r21,0 										;nr indexu porownywanego stringu											
@@ -156,8 +147,8 @@ clrParam_loop:
 
 	
 		ldiwz	code_table*2								;tablica rozkazow i adresow funkcji
+		
 		lds		r20,URXpRD
-
 		ldi		r17,6+2										;offset wpisu w tablice (3B cursor, 5B klawisze F1 F2...)
 
 		rcall	mul_sbstR17R21
@@ -201,12 +192,12 @@ no_param:
 		cp		r17,r0										;porownuje bufor ram z ciagiem w rom
 		brne	unequal										;niezgodny bajt porownaj kolejny wpis
 			
-		cp		r19, r20									;
+		cp		r19, r20			
 		brne	compcirqbufcomp	
 
 		lpm
 		adiw 	z,1	
-		cp		r0,zero										;jesli wszystkie bajty z tablicy porownane ostatni =0,lepiej bylo by tu porownac rzeczywista ilosc odczytanych bajtow
+		cp		r0,zero										;jesli wszystkie bajty z tablicy porownane ostatni =0
 		brne	unequal
 exit_param:
 ;------odczyt adresu funkcji-----------
@@ -239,6 +230,10 @@ ret
 ; ladowanie parametru hex do rejestru status lub phase
 ;-----------------------------------------------------------
 change_mode:
+		mov		keyLock,one									;odebranie rozkazu blokuje automatycznie zmiane fazy portami procesora
+		cbi 	ddrd,6
+		out 	gimsk,zero
+
 		set													;flaga t rorzonia pomiedzy zapisem fazy lub statusu
 		rjmp 	rw_param	
 change_phase:
@@ -276,22 +271,14 @@ curLeft_key:
 curRight_key:
 		rcall	phase_plus
 disp_phase:
-;		cli
-;		push 	r16
-;		push 	r30
-;		push	r31
-;		ldiwz 	phase_str*2
-		;wdr
-		;nops 2
-;		rcall 	usart_romstring;nieodgadniony blad
+		;cli
+		rcall	usart_nl
+		ldiwz 	phase_str*2
+		rcall 	usart_romstring
 		mov		r16,phase
 		rcall	usartsend_hex
-;		pop		r31
-;		pop 	r30
-;		pop		r16
-;rjmp	int0_irq_wdt_wait
+;ret
 rjmp	mode_select		
-;		rjmp pc-2
 ;-----------------------------------------------------------	
 ;zamiana nibble asci Hex na bin :R16 -> R16
 hex_To_bin:
@@ -318,7 +305,7 @@ ok_string:
 mul_sbstR17R21:
 
 
-;***************************************************************************
+;***********************************************************
 ;*
 ;* "mpy8u" - 8x8 Bit Unsigned Multiplication
 ;*
@@ -333,7 +320,7 @@ mul_sbstR17R21:
 ;* Note: Result Low byte and the multiplier share the same register.
 ;* This causes the multiplier to be overwritten by the result.
 ;*
-;***************************************************************************
+;***********************************************************
 
 ;***** Subroutine Register Variables
 

@@ -11,12 +11,20 @@ usart_nl:
 		rcall 	usartsend
 		pop 	r16
 ret
-
+/*
 usart_space:
 		push 	r16
 		push 	r17
 		ldi 	r16,' '
 		rjmp	USARTbus
+*/
+lf_print:
+#ifdef LF_ENDSTR
+		ldi 	r16,10										;LF (line feed rozpoznawany jako koniec lniii przez readline w pytonie)
+		#else
+		ret	
+#endif
+	
 usartsend:
 		push 	r16
 		push 	r17
@@ -81,11 +89,5 @@ usart_romstring0:
 		rjmp	usart_romstring0
 end_string:
 ret
-
-lf_print:
-#ifdef LF_ENDSTR
-	ldi r16,10												;LF (line feed rozpoznawany jako koniec lniii przez readline w pytonie)
-	rcall	usartsend
-#endif
-	ret				
+			
 ;===========================================================

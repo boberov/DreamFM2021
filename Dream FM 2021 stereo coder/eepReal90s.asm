@@ -39,27 +39,20 @@ REEPROM_WC:			.Byte	2								;licznik sprawdzanego bajtu
 
 ;--------startowanie updateu eeprom z ram-------------------
 ;startnvramcommit:
-NVRAMwrite:	
-		;cli
-;ldi 	r16, '>'
-;rcall 	usartsend
-															;blokujaca petla
+NVRAMwrite:													;blokujaca petla
 		sti 	REEPRoM_MIRROR_C,3							;start poprawny to wartosc 3
 		stiw	REEPROM_WC,0
 NVRAMwr:
-		;wdr
 		rcall 	AUTOEEPROM
 		loadw 	r16,r17,REEPROM_WC
 		cpi		r16,low(RELIABLE_ALLSPACE)
 		ldi		r16,high(RELIABLE_ALLSPACE)
 		cpc		r17,r16
 		brne 	NVRAMwr	
-	;*@*sbi  	EECR, EERIE									;wlacz przerwanie EEPROM READY automatycznie wylaczane po updejcie eeprom (kopia ram)
 retu3:
-		;sei
-
-;ldi 	r16, '*'
-;rcall 	usartsend
+		rcall	usart_nl
+		ldi 	r16, '*'									;zapis do eeprom
+		rcall 	usartsend
 ret
 
 NVRAMrestore:

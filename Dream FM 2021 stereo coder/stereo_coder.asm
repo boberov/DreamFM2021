@@ -37,6 +37,7 @@
 	Zmiane fazy mozna tezuzyskac popzrez wyslanie esc codes kursorow lewo prawo. Wartosc nie zapisywana do eeprom
 	Odebranie usartem rozkazu 'SCphaXX' ustawia wartosc fazy z parametru XX hexadecymalnie (rozkaz konczy znak 0x0D LF lub timeout)
 	Odebranie rozkazu 'SCstaXX' ustawia rejestr z flagami bitowymi (statusF: mono, Amono, power)
+	Odebranie poprawnego rozkazu z usart blokuje int0 int1 (LED przygaszana)
 
 	Znane niedogodnosci:
 	Podczas odbioru znakow usartem faza pilota ulega przesunieciu
@@ -44,19 +45,22 @@
 	EEprom podatny na uszkodzenia, ale po dodaniu predelay i czekaniu na flagi zapsiu eeprom jest juz ok
 */
 
+;-----------------------------------------------------------
 .include 	"2313def.inc"
 .include 	"macro.inc"
 .include 	"sinus_table.inc"
+;-----------------------------------------------------------
 
+;-----------------------------------------------------------
 ;#define DETUNE_PROTECT										;jesli nowy nvram to nie uruchamiaj kodera (wymuszenie strojenia), po dodaniu mozliwosc ladowania PH usartem nie ma sensu tego wlaczac
 #define 	LF_ENDSTR 										;znak LF za potwierdzeniem OK https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 .equ	PHASE_STEPS =	158									;ilosc krokow tablicy sinusa
 .equ	PHASE_DEF =		11									;domyslna wartosc przesuniecia fazy na +
-.equ	PHASE0_TUNE =	61									;wartosc przesuniecia cykli zegara przy starcie, dobrana aby zbocza narastajace sygnalu 38kHz z OC1 oraz b.7 Daca R2R byly zgodne dla zmiennej glownej phase = 0
+.equ	PHASE0_TUNE =	60									;wartosc przesuniecia cykli zegara przy starcie, dobrana aby zbocza narastajace sygnalu 38kHz z OC1 oraz b.7 Daca R2R byly zgodne dla zmiennej glownej phase = 0
 .equ 	UBRR_VAL=		18									;predkosc usartu 19.200kb/s
 
 .equ 	LF_CHAR	=		0x0A								;znak konca linii dla usart RX (LF 0x0A) (CR 0x0D tylko do tetow)
-.equ 	LF_Tout	=		2									;timeout bufora usart (19kHz /256/256	~2.5s max timeout)
+.equ 	LF_Tout	=		190									;timeout bufora usart 19k = 1s
 .equ	AUTO_MONOTO =	50									;timeout dla automono 50 = ~1s
 .equ	RXB_SIZE = 		32									;bufor odbiodnika RX
 .equ	PARAM_SIZE=		8									;bufor parametru rozkazu
@@ -66,6 +70,7 @@
 .def 	status = 		R23									
 .equ	statusF_mono = 	0									;b.0 = mono - pilot wylaczony
 .equ	statusF_Amono = 1									;b.1 = automono - pilot wylaczany automatycznie na krotki czas gdy faza zaburzona
+.equ	statusF_Ilock = 6									;b.6 = Interface lock - wylaczenie odbioru rx oraz blokada int0 int1
 .equ	statusF_power = 7									;b.7 = power down - sleep procesora
 .def	autoMonoPRS = 	R11									;preskaler czasu automatycznego wylaczenia pilota gdy transfer usart (i tak jest faza wtedy zla)
 .def 	phase  = 		R12
@@ -74,6 +79,7 @@
 .def 	zero=			R15
 .def	URXtoutCl = 	R24									;timeout 16bit dla odbioru linii znakow z usartu
 .def	URXtoutCH = 	R25
+;-----------------------------------------------------------
 
 .dseg
 ;-------------------- data RAM -----------------------------
@@ -94,7 +100,7 @@ autoMonTO:		.Byte	2
 
 ;-----------------------------------------------------------
 welcome_version:
-.db	"Dream FM 2021 Stereo Coder V0.2",0
+.db	"Dream FM 2021 Stereo Coder V2.1",0
 phase_str:
 .db "Phase:",0,0
 VT100_init:
@@ -152,6 +158,7 @@ start:
 		clr		one
 		inc		one
 
+;--------------- blokada strojenia portami -----------------
 		ldi		r16,3
 		mov		keyLock,r16
 		sbis	pind,3										;jesli portD.3 oraz d.2=0 strojenie niemozliwe (nie moze byc or, poniewaz po aktywnosci jest reset i sprawdzanie na blokade klawiszy)
@@ -164,8 +171,6 @@ start:
 		oti 	gimsk,0b11000000							;enable int0,int1
 keys_locked:
 ;------------ welcome --------------------------------------
-
-
 		ldiwz 	VT100_init*2
 		rcall 	usart_romstring
 		rcall	NVRAMrestore
@@ -180,9 +185,12 @@ keys_locked:
 		mov		r16,phase
 		rcall	usartsend_hex
 
-;----------- wskaznik stosu resetowany ---------------------
+;----------- punkt powrotu z przerwan ----------------------;do tego miejsca wracaja podprogramy, jesli zostala wykonana jakas funkcja w przerwaniu (trzeba faze przywrocic)
 mode_select:
 		wdr
+		ldi 	r16,low(RAMEND)								;stos
+		out 	SPL,r16										;ustawia wskaznik stosu
+
 		clt	
 		sbrs 	status,statusF_Amono						;chwilowy tryb mono po odczycie danych usartem (nie dodtyczy strojenia pinami procesora)
 		rjmp	no_Amonomode
@@ -195,34 +203,32 @@ no_Amonomode:
 		rjmp	powerdown_loop								;powerdown
 		oti		ucr, 1<<TXEN | 1<<RXEN | 1<<RXCIE			;odbiornik wlaczany dopiero tutaj, bo nie ma powrotu z przerwania URX przez reti
 
-
 ;===========================================================
 ;-------------- synchronizer  ------------------------------
 ;===========================================================		
 		oti		tccr1a,0b01000000
-		oti 	tccr1b,0
+		out 	tccr1b,zero
 		
-		oti		tcnt1h,0
+		out		tcnt1h,zero
 		oti		tcnt1l,50
 		
-		oti		ocr1ah,0
+		out		ocr1ah,zero
 		oti		ocr1al,79-1
 		
 		oti 	tccr1b,0b00001001
-wait_state:		
+wait_state:													;rozpoznawanie jaki stan ma togglowane wyjscie OC1 (nie mozna go inaczej synchronizowac)
 		sbic	pinb,3
 		rjmp	wait_state
 wait_state1:		
 		sbis	pinb,3
 		rjmp	wait_state1
 
-		oti		tcnt1h,0
+		out		tcnt1h,zero
 		oti		tcnt1l,PHASE0_TUNE							;kompensacja czasu (0 przesuniecia fazy dla phase = 0)
 
-		ldi 	r16,low(RAMEND)								;stos
-		out 	SPL,r16										;ustawia wskaznik stosu
-
+		sbrs	status,statusF_Ilock						;blokada przerwan (niemozna przestrajac pinami lub kontrolowac przez usart)
 		sei
+		
 		brtc	pc+2
 		rjmp	mono_loop									;jesli tryb amono i czas timeout nie uplynal
 		sbrc 	status,statusF_mono
@@ -425,21 +431,8 @@ _19kHzDDSLOOP:
 ;-------------------- usart RX -----------------------------
 ;'rcall	usart_rx_buffer										;odbior danych z bufora usartu i wykonywanie zadania
 ;rcall	usart_rx_write	
-		usartRXproc											;macro 9CK when standby
+		usartRXproc											;macro 10CK when standby
 
-		nop;
-;		nop
-;		nop
-/*
-		nop
-		nop
-		nop
-		nop
-		nop
-		nop
-		nop
-		nop
-		*/
 		ldi 	r16,SIN82
 		out 	portb,r16
 		ldi 	r16,SIN83
@@ -611,7 +604,6 @@ n1:
 		bst 	Led_Ch,6									;kopiuj bit.6 rejestru r22 do flagi T
 		bld 	r16,6										;kopiuj z flagi T do  bitu .6 rejestru R29
 		out 	portd,r16									;mrugaj dioda jesli wszystko ok
-								;mrugaj dioda jesli wszystko ok
 		rjmp 	_19kHzDDSLOOP								;2clk
 ;-----------------------------------------------------------
 ;===========================================================
@@ -669,10 +661,8 @@ powerdown_loop:
 		in	 	r17, USR
 		sbrs 	r17,UDRE
 		rjmp 	powerdown_loop
-		ldi 	r16,0b00011000						
-		out 	wdtcr,r16									;wylaczanie wdt
-		ldi 	r16,0b00010000						
-		out 	wdtcr,r16
+		oti 	wdtcr,0b00011000							;wylaczanie wdt
+		oti 	wdtcr,0b00010000
 		out		ddrd,zero
 		out		portd,zero
 		oti		mcucr, 1<<SE|1<<SM							;power down mode
