@@ -79,6 +79,8 @@
 .def 	zero=			R15
 .def	URXtoutCl = 	R24									;timeout 16bit dla odbioru linii znakow z usartu
 .def	URXtoutCH = 	R25
+
+.equ	DEFAULT_PORTD=	0b01111101
 ;-----------------------------------------------------------
 
 .dseg
@@ -123,7 +125,7 @@ delay_loop:
 		out 	ddrb,r16									
 		ldi 	r16,0b00000010
 		out 	ddrd,r16
-		ldi 	r16,255
+		ldi 	r16,DEFAULT_PORTD
 		
 		bst 	r29,0										;pre miganie led
 		bld 	r16,6			
@@ -600,7 +602,7 @@ _19kHzDDSLOOP:
 		brcc 	n1
 		inc 	Led_Ch
 n1:
-		ldi 	r16,0b01111100								;led flasher (19kHz/32768)
+		ldi 	r16,DEFAULT_PORTD							;led flasher (19kHz/32768)
 		bst 	Led_Ch,6									;kopiuj bit.6 rejestru r22 do flagi T
 		bld 	r16,6										;kopiuj z flagi T do  bitu .6 rejestru R29
 		out 	portd,r16									;mrugaj dioda jesli wszystko ok
@@ -633,7 +635,7 @@ n2:
 		cbi		portd,6
 		rjmp	n3
 n2a:
-		ldi 	r29,0b01111100								;led flasher (19kHz/32768)
+		ldi 	r29,DEFAULT_PORTD							;led flasher (19kHz/32768)
 		out 	portd,r29									;mrugaj dioda jesli wszystko ok
 n3:		
 		

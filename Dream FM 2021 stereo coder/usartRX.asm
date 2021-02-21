@@ -12,7 +12,7 @@ URXbuffer:		.Byte	RXB_SIZE							;bufor usart
 URXparam:		.Byte	PARAM_SIZE							;obszar na odczyt parametru rozkazu
 ;-----------------------------------------------------------
 .cseg
-.equ 	ASC_TAB_MAX 	=4 									;ilosc wpisow w tablicy
+.equ 	FTAB_SIZE	 	=4 									;ilosc wpisow w tablicy
 code_table:
 /*
 .db 0x1B,0x5B,0x42,0x00,0x00,0x00							;curUp
@@ -220,7 +220,7 @@ exit_param:
 ret
 unequal:
 		inc		r21
-		cpi		r21,ASC_TAB_MAX
+		cpi		r21,FTAB_SIZE
 		breq	pc+2
 		rjmp	compcirqbuf0
  		clz
