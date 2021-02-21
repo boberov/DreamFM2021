@@ -2,11 +2,12 @@
 ;==================== Dream FM 2021  =======================
 ;===================== usartRX.asm =========================
 ;===========================================================
-;parsowanie danych z usartu i wykonywanie zadan
+;parsowanie danych z usartu i wykonywanie rozkazow
+;===========================================================
 
 .equ LF_CHAR			=10
-.equ LF_Tout			=int(61*1)						
-.equ ASC_TAB_MAX 		=3 								;ilosc wpisow w tablicy
+.equ LF_Tout			=int(61*0.1)						
+.equ FTAB_SIZE 			=5 									;ilosc wpisow w tablicy
 
 code_table:
 /*
@@ -37,13 +38,16 @@ code_table:
 */
 
 ;pamietaj 6B+2B adresu na index
+.db "TXshd",0x00									
+.dw tx_shdwn
 .db "TXoff",0x00									
 .dw tx_disable
 .db "TXon",0x00,0x00										
 .dw tx_enable
-.db "TXpow",0x01											;odczytywany parametr na koncu ciagu o dlugosci od 1 do 7B
+.db "TXpow",0x01											;odczytywany parametr na koncu ciagu o dlugosci od 1B
 .dw tx_power
-
+.db "TXfrq",0x01											;parametr moze miec 4 lub 5B 					
+.dw tx_freq
 default_ret:
 ret
 
@@ -66,7 +70,6 @@ usart_rx_write:
 
 		in	 	r16,UDR
 	
-
 		cpi		r16,LF_CHAR									;line feed wymusza przeparsowanie linii
 		brne	no_lineend									;uwaga bajt konca linii nie jest wpisywany do bufora
 		sti		URXtoutC,LF_Tout-1
@@ -84,7 +87,7 @@ ret
 usart_rx_buffer:
 ;-------------------timeout--------------------------------
 		incrs	URXtoutC
-		cpi		r16,LF_Tout										;timeout z URXtoutC
+		cpi		r16,LF_Tout									;timeout z URXtoutC
 		brne	nochar_in_buf								;po odebraniu bajtu usartem czekany czas timeout zanim sciagany bufor
 ;----------------odbior klawiszy----------------------------															
 		lds		r19,URXpWR
@@ -124,7 +127,7 @@ clrParam_loop:
 		adiw	x,1											;bajt0 zmiennej parameter zawiera ilosc zapisanych bajtow - max7
 
 	
-		ldiwz	code_table*2							;tablica stringow i adresow funkcji
+		ldiwz	code_table*2								;tablica stringow i adresow funkcji
 		lds		r20,URXpRD
 
 		ldi		r17,6+2										;offset wpisu w tablice (3B cursor, 5B klawisze F1 F2...)
@@ -198,18 +201,27 @@ exit_param:
 ret
 unequal:
 		inc		r21
-		cpi		r21,ASC_TAB_MAX
+		cpi		r21,FTAB_SIZE
 		breq	pc+2
 		rjmp	compcirqbuf0
  		clz
 ret
-;-----------------------------------------------------------
+
+
 
 ;-----------------------------------------------------------
-tx_disable:
-	rcall	RFTX_disable
+;============== wykonywanie rozkazow =======================
+;-----------------------------------------------------------
+tx_shdwn:
+		;rcall	RFTX_disable
 		rcall 	usart_nl
-	rjmp	ok_string
+		rcall	ok_string
+		rjmp 	powerdown_loop
+;-----------------------------------------------------------
+tx_disable:
+		rcall	RFTX_disable
+		rcall 	usart_nl
+		rjmp	ok_string
 ret
 
 tx_enable:
@@ -221,160 +233,105 @@ tx_enable:
 		rjmp	ok_string
 ret
 tx_power:
-	;w r19 wskaznik odczytu
-	ldiwx	URXparam									;bufor w ram
-	ld		r17,x+
-	;cpi 	r17,0
-	;brne	dd_loop
-	;ret
 		rcall 	usart_nl
+;		ldiwz	lab_txpow
+;		rcall	usart_romstring
+		ldiwx	URXparam+1									;bufor w ram
+		ld		r16,x
+		subi	r16,'0'
+		sts		txpower,r16
+		rcall	tx_powerset
+	rjmp	ok_string
 
-		ldi 	r16,'P'
-		rcall	usartsend
-		ldi 	r16,'O'
-		rcall	usartsend
-		ldi 	r16,'W'
-		rcall	usartsend
+tx_freq:
+		rcall 	usart_nl
+		ldiwx	URXparam
+		ld		r16,x+
+		cpi		r16,5+1										;dwa znaki asci na waartosc hex
+		brsh	bad_param									;nieprawidlowa dlugosc parametru
+		cpi		r16,3+1
+		brlo	bad_param		
+		rcall	paramto_txfreq
 
-	ld		r16,x
-	subi	r16,'0'
-	sts		txpower,r16
-	rcall	tx_powerset
+		cpiw	r30,r31,BAND_LOW_MHZ
+		brlo	bad_param
+		
+		cpiw	r30,r31,BAND_HIGH_MHZ+1
+		brsh	bad_param
+
+
+		storew	LMXfreqMHz10,r30,r31
+		sti		LMXfreqMHz10+2,0
+		rcall	LMX2306_TuneOnly
+		ldiwx	TMPdata
+		rjmp	ok_string
+bad_param:
 ret
+															
+paramto_txfreq:
+		ldiwz	0
+;------x1000--------
+		ld		r17,x+	
+		cpi		r17,'0'
+		breq	MSD_zero
+		cpi		r17,'1'
+		breq	MSD_one
+		rjmp	no_1000x
+MSD_one:
+		ldiwz	1000
+MSD_zero:
+;-------x100--------
+		ld		r17,x+	
+no_1000x:													;jesli pierwsza cyfra to nie zero ani jeden wtedy jest uwazana zacyfre 10xMHz
+		subi	r17,'0'
+		ldi		r21,100
+		rcall	mul_sbstR17R21
+		add		r30,r0
+		adc		r31,r1
+;-------x10---------
+		ld		r17,x+										;Pozycja MHz
+		subi	r17,'0'
+		ldi		r21,10
+		rcall	mul_sbstR17R21
+		add		r30,r0
+		adc		r31,r1
+;-------------------
+		ld		r17,x+										;separator '.' (lub cokolwiek innego)
+;-------x1----------
+		ld		r17,x+										;setki kHz
+		subi	r17,'0'
+		add		r30,r17
+		adc		r31,zero
+ret
+;-----------------------------------------------------------
 
+
+/*
+load_B:
+		ld		r16,x+										;MSN starsze nibble
+		rcall	hex_To_bin
+		mov		r17,r16
+		ld		r16,x+	
+		rcall	hex_To_bin
+		swap 	r17
+		or		r16,r17
+ret
+hex_To_bin:
+		cpi		r16,':'
+		brlo	numbers_msb
+		subi 	r16,'A'-0x0A
+		rjmp	lett_msb
+numbers_msb:
+		subi 	R16,'0'
+lett_msb:
+		andi	r16,0x0F
+ret	
+*/
+/*
 dd_loop:
 	ld		r16,x+
 	rcall	usartsend_hex
 	dec		r17
 	brne	dd_loop
 	rjmp	ok_string
-
-ok_string:
-	ldi 	r16,'O'
-	rcall	usartsend
-	ldi 	r16,'K'
-	rcall	usartsend
-	rjmp	lf_print
-;-----------------------------------------------------------
-
-
-;substytut rozkazu mul
-mul_sbstR17R21:
-
-
-;***************************************************************************
-;*
-;* "mpy8u" - 8x8 Bit Unsigned Multiplication
-;*
-;* This subroutine multiplies the two register variables mp8u and mc8u.
-;* The result is placed in registers m8uH, m8uL
-;*  
-;* Number of words	:34 + return
-;* Number of cycles	:34 + return
-;* Low registers used	:None
-;* High registers used  :3 (mc8u,mp8u/m8uL,m8uH)	
-;*
-;* Note: Result Low byte and the multiplier share the same register.
-;* This causes the multiplier to be overwritten by the result.
-;*
-;***************************************************************************
-
-;***** Subroutine Register Variables
-
-.def	mc8u	=r17	;multiplicand
-.def	mp8u	=r21	;multiplier
-.def	m8uL	=r21	;result Low byte
-.def	m8uH	=r1		;result High byte
-
-	push	mc8u
-	push	mp8u
-;***** Code
-
-mpy8u:	
-	clr	m8uH		;clear result High byte
-	lsr	mp8u		;shift multiplier
-	
-	brcc	noad80		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad80:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad81		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad81:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad82		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad82:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad83		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad83:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad84		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad84:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad85		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad85:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc noad86		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad86:	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier
-
-	brcc	noad87		;if carry set
-	add	m8uH,mc8u	;    add multiplicand to result High byte
-noad87:	
-	ror	m8uH		;shift right result High byte 
-	ror	m8uL		;rotate right result L byte and multiplier	
-
-;****
-	mov		r0,r21
-	pop		mp8u
-	pop		mc8u
-ret
-
-.exit
-;------przyspieszacz gdy trzymany guzik--------------------
-;nie jest to idealne jesli pomiar czasu 1 na sekunde
-;ale nie ma potrzeby zeby ten mechanizm dzialal precyzyjniej
-long_pressKey:
-		lds		r16,repKeyHz
-		cpi		r16,10										;ile powtorzen odebranych w cagu sekundy
-		brlo	noConti_press
-
-		lds		r16,repkeyC
-		ldi		r17,1										;itteracja x1
-		cpi 	r16,2
-		brlo	pc+2
-		ldi		r17,10										;itteracja x10 po 3s
-		cpi		r16,5							
-		brlo	pc+2
-		ldi		r17,100										;itteracja x100 po 6 sekundach
-
-		inc		r16
-		brne	pc+2
-		dec		r16
-		sts 	repkeyC,r16									;licznik pomocniczy
-		sts		repkeyD,r17									;mnoznik -szybkosc zmian (symulacja pokretla dial)
-		clear	repKeyHz									;licznik czestotliwosci przychodzacego klawisza
-		ret
-noConti_press:
-		clear	repKeyHz
-		clear	repkeyC
-		sti		repkeyD,1
-ret
-;-----------------------------------------------------------
+*/

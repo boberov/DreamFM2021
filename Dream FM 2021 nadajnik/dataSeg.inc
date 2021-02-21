@@ -20,6 +20,7 @@ URXpWR:			.Byte		1			;wskaznik bufora zapisu
 URXpRD:			.Byte		1			;wskaznik bufora odczytu
 URXbuffer:		.Byte		RXB_SIZE	;bufor usart
 URXparam:		.Byte		PARAM_SIZE	;obszar na odczyt parametru rozkazu
+TMPdata:		.Byte		8			;bufor tymczasowy
 ;-----------freq meter------------------
 FREQpWR:		.Byte		1			;wskaznik zapisu
 FREQpRD:		.Byte		1			;wskaznik odczytu

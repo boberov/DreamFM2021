@@ -1,131 +1,65 @@
 ;===========================================================
-;===================== Icebox 2020 =========================
+;==================== Dream FM 2021  =======================
 ;====================== macro.inc ==========================
 ;===========================================================
 .macro usartstring
 
-		ldi r30,low(@0*2)
-		ldi r31,high(@0*2)
-		call usartstrin
+		ldi 	r30,low(@0*2)
+		ldi 	r31,high(@0*2)
+		call 	usartstrin
 	
 .endm
 
 .macro usartstringDBG
 
-		ldi r30,low(@0*2)
-		ldi r31,high(@0*2)
-		call usartstring_DBG
+		ldi 	r30,low(@0*2)
+		ldi 	r31,high(@0*2)
+		call 	usartstring_DBG
 	
 .endm
 
 
 .macro usartstring0safe
-		push r16
-		push r30
-		push r31
-		ldi r30,low(@0*2)
-		ldi r31,high(@0*2)
-		rcall usartstrin
-		pop r31
-		pop r30	
-		pop r16	
+		push 	r16
+		push 	r30
+		push 	r31
+		ldi 	r30,low(@0*2)
+		ldi 	r31,high(@0*2)
+		rcall 	usartstrin
+		pop 	r31
+		pop 	r30	
+		pop 	r16	
 .endm
 ;-----------------------usart debug-----------------------------------------
 .macro usart_bcd_LSD
-		mov r17,@0
-		andi r17,0b00001111
-		cpi r17,10						;if >9 + 7chr to output (A=10dec)
-		brlo disp_bcd0
-		subi r17,256-7
+		mov 	r17,@0
+		andi 	r17,0b00001111
+		cpi 	r17,10					;if >9 + 7chr to output (A=10dec)
+		brlo 	disp_bcd0
+		subi 	r17,256-7
 disp_bcd0:
-		subi r17,256-48
-		mov r16,r17
-		rcall usartsend
+		subi 	r17,256-48
+		mov 	r16,r17
+		rcall 	usartsend
 .endm
 .macro usart_bcd_MSD
-		mov r17,@0
-		andi r17,0b11110000
-		swap r17
-		cpi r17,10						;if >9 + 7chr to output (A=10dec)
-		brlo disp_bcd0
-		subi r17,256-7
+		mov 	r17,@0
+		andi 	r17,0b11110000
+		swap 	r17
+		cpi 	r17,10					;if >9 + 7chr to output (A=10dec)
+		brlo 	disp_bcd0
+		subi 	r17,256-7
 disp_bcd0:
-		subi r17,256-48
-		mov r16,r17
-		rcall usartsend
+		subi 	r17,256-48
+		mov 	r16,r17
+		rcall 	usartsend
 .endm
-
-
-;--------------------------------debug tools---------------------------------------------
-.equ markportnr=1
-.equ markddr=ddrd
-.equ markport=portd
-.macro mark_H
-		sbi markport,markportnr
-		sbi markddr,markportnr
-.endm
-.macro mark_L
-		Cbi markport,markportnr 
-		Cbi markddr,markportnr
-.endm
-.macro mark
-		sbi markddr,markportnr
-		sbi markport,markportnr 
-		cbi markport,markportnr 
-.endm
-
-.macro dbg 
-		push r16
-
-				in r16,sreg
-
-		push r16
-
-	.if @0>0x3F
-		lds	r16,@0
-	.elif @0>0x1F
-		in	r16,@0
-	.else
-		mov r16,@0
-	.endif
-		rcall usartsend_hex
-			pop r16
-
-		out sreg,r16
-
-		pop r16
-.endm
-.macro dbgr 
-		push r16
-		in r16,sreg
-
-		push r16
-		mov r16,@0
-		rcall usartsend_hex
-		pop r16
-
-		out sreg,r16
-		pop r16
-.endm
-
-.macro dbgA 
-		push r16
-		in r16,sreg
-
-		push r16
-		ldi r16,@0
-		rcall usartsend
-		pop r16
-
-		out sreg,r16
-		pop r16
-.endm
-
+															
 
 .macro nops ;1-16
 	.if @0>1
 		nop
-		nops @0-1
+		nops 	@0-1
 	.elif @0==1
 		nop
 	.endif
@@ -134,10 +68,10 @@ disp_bcd0:
 
 ;---------------------------------------------------------------------------------------
 
-.MACRO XCH0									;exchange rs->rd  rd->rs
-		eor @0, @1
-		eor @1, @0
-		eor @0, @1
+.MACRO XCH0								;exchange rs->rd  rd->rs
+		eor 	@0, @1
+		eor 	@1, @0
+		eor 	@0, @1
 .ENDM 
 ;*********************************************************
 ;*	BIT access anywhere in IO or SRAM
@@ -150,15 +84,15 @@ disp_bcd0:
 		.message "Only values 0-7 allowed for Bit parameter"
 	.endif
 	.if @0>0x3F
-		lds	@2, @0
-		sbr	@2, (1<<@1)
-		sts	@0, @2
+		lds		@2, @0
+		sbr		@2, (1<<@1)
+		sts		@0, @2
 	.elif @0>0x1F
-		in	@2, @0
-		sbr	@2, (1<<@1)
-		out	@0, @2
+		in		@2, @0
+		sbr		@2, (1<<@1)
+		out		@0, @2
 	.else
-		sbi	@0, @1
+		sbi		@0, @1
 	.endif
 .ENDMACRO
 
@@ -167,51 +101,51 @@ disp_bcd0:
 		.message "Only values 0-7 allowed for Bit parameter"
 	.endif
 	.if @0>0x3F
-		lds	@2, @0
-		cbr	@2, (1<<@1)
-		sts	@0, @2
+		lds		@2, @0
+		cbr		@2, (1<<@1)
+		sts		@0, @2
 	.elif @0>0x1F
-		in	@2, @0
-		cbr	@2, (1<<@1)
-		out	@0, @2
+		in		@2, @0
+		cbr		@2, (1<<@1)
+		out		@0, @2
 	.else
-		cbi	@0, @1
+		cbi		@0, @1
 	.endif
 .ENDMACRO
 ;-----------------------------------------------------------------------------------
 
 .macro oti;2mck									;polaczene ldi oraz out
-		ldi r16,@1
-		out @0,r16
+		ldi 	r16,@1
+		out 	@0,r16
 .endm
 
 .macro sti;3mck
-		ldi r16, @1
-		sts @0,r16
+		ldi 	r16, @1
+		sts 	@0,r16
 .endm
 
 .macro stiw
-		ldi r16, high(@1)
-		sts @0+1,r16
-		ldi r16, low(@1)
-		sts @0+0,r16
+		ldi 	r16, high(@1)
+		sts 	@0+1,r16
+		ldi 	r16, low(@1)
+		sts 	@0+0,r16
 		
 .endm
 
 .macro sbri										;sbr dla niskich rejestrow 
-		mov r16, @0
-		sbr r16,@1
-		mov @0,r16
+		mov 	r16, @0
+		sbr 	r16,@1
+		mov 	@0,r16
 .endm
 .macro cbri										;cbr dla niskich rejestrow 
-		mov r16, @0
-		cbr r16,@1
-		mov @0,r16
+		mov 	r16, @0
+		cbr 	r16,@1
+		mov 	@0,r16
 .endm
 
 .macro eventlog
-		ldi r16, @0
-		rcall writeevent
+		ldi 	r16, @0
+		rcall 	writeevent
 .endm
 .macro STOP
 		a:
@@ -220,45 +154,45 @@ disp_bcd0:
 .endm
 
 .macro LDIWr16
-		LDI r16,low(@0)
-		LDI r17,high(@0)
+		LDI 	r16,low(@0)
+		LDI 	r17,high(@0)
 .endm
 .macro LDIWr18
-		LDI r18,low(@0)
-		LDI r19,high(@0)
+		LDI 	r18,low(@0)
+		LDI 	r19,high(@0)
 .endm
 
 .macro LDIWX
-		LDI r26,low(@0)
-		LDI r27,high(@0)
+		LDI 	r26,low(@0)
+		LDI 	r27,high(@0)
 .endm
 
 .macro LDIWY
-		LDI r28,low(@0)
-		LDI r29,high(@0)
+		LDI 	r28,low(@0)
+		LDI 	r29,high(@0)
 .endm
 .macro LDIWZ
-		LDI r30,low(@0)
-		LDI r31,high(@0)
+		LDI 	r30,low(@0)
+		LDI	 	r31,high(@0)
 .endm
 .macro LDIW
-		LDI @0,low(@2)
-		LDI @1 ,high(@2)
+		LDI 	@0,low(@2)
+		LDI 	@1 ,high(@2)
 .endm
 
 
 .macro load4R16
-		LDS R16,@0+0
-		LDS R17,@0+1
-		LDS R18,@0+2
-		LDS R19,@0+3
+		LDS 	R16,@0+0
+		LDS 	R17,@0+1
+		LDS 	R18,@0+2
+		LDS 	R19,@0+3
 .endm
 
 .macro store4R16
-		sts @0+0,r16
-		sts @0+1,r17
-		sts @0+2,r18
-		sts @0+3,r19
+		sts 	@0+0,r16
+		sts 	@0+1,r17
+		sts 	@0+2,r18
+		sts 	@0+3,r19
 .endm
 
 

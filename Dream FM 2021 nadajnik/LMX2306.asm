@@ -57,9 +57,9 @@ szczegoly sa w DS
 .EQU		DAC_pin=		pinb
 .EQU		DAC_ddr=		ddrb
 
-.EQU		DAC_B2=			1		;bez rezystora
-.EQU		DAC_B1=			4		;47k
-.EQU		DAC_B0=			2		;680k
+.EQU		DAC_B2=			1								;bez rezystora
+.EQU		DAC_B1=			4								;47k
+.EQU		DAC_B0=			2								;680k
 
 ;===========================================================
 ;------------ porty lmxa i microwire -----------------------
@@ -68,67 +68,69 @@ szczegoly sa w DS
 .EQU		LMX_ddr=		ddrd
 
 .EQU		LMX_DAI=		4
-.EQU		LMX_DAT=		4	;miso
-.EQU		LMX_CLK=		5	;clk wspoldzielony z pomiarem freq
-.EQU		LMX_LE=			3	;load enable act HI
-.equ		LMX_FOLD = 		2	;FO/LD
+.EQU		LMX_DAT=		4								;miso
+.EQU		LMX_CLK=		5								;clk wspoldzielony z pomiarem freq
+.EQU		LMX_LE=			3								;load enable act HI
+.equ		LMX_FOLD = 		2								;FO/LD
 .equ		RF_ENABLE =		6
 ;-----------------------------------------------------------
 
 
 tx_powerset:
 		lds		r16,TXpower
-		;subi	r16,'0'
+tx_powersetr16:
 		andi	r16,0x03
-		rcall	usartsend_hex
 
-		cbi		DAC_port,DAC_B0;moc
+;		cbi		DAC_port,DAC_B0;moc
+;		cbi		DAC_ddr,DAC_B0
+
 		cbi		DAC_port,DAC_B1
-		cbi		DAC_port,DAC_B2
-		cbi		DAC_ddr,DAC_B0
 		cbi		DAC_ddr,DAC_B1
+
+
+		cbi		DAC_port,DAC_B2	
 		cbi		DAC_ddr,DAC_B2
-		
+
+
+		cbi		DAC_ddr,DAC_B1
+		sbi		DAC_port,DAC_B1
+
+
+;sbi		DAC_port,DAC_B2
+;sbi		DAC_ddr,DAC_B2		
 		ldiwz	power0
 		lsl		r16					;x4
 		lsl		r16
 		addw	r30,r31,r16,zero
 		icall	
-		rcall	ok_string
+		;rcall	ok_string
 ret
 power0:
-		nops	1
-		sbi		DAC_port,DAC_B0
-		sbi		DAC_ddr,DAC_B0
+		nop
+		cbi		DAC_port,DAC_B1
+		cbi		DAC_ddr,DAC_B1
 		ret
 power1:
-		nops	1
+		nop
+		cbi		DAC_ddr,DAC_B1
 		sbi		DAC_port,DAC_B1
-		sbi		DAC_ddr,DAC_B1	
 		ret
-power2:
-		nops	1
-		cbi		DAC_port,DAC_B2
-		sbi		DAC_ddr,DAC_B2
+power2:	
+		nop
+		cbi		DAC_ddr,DAC_B2
+		sbi		DAC_port,DAC_B2
 		ret
 power3:
-		nops	1
-		sbi		DAC_port,DAC_B0;moc
-		sbi		DAC_port,DAC_B1
+		nop
 		sbi		DAC_port,DAC_B2
-		sbi		DAC_ddr,DAC_B0
-		sbi		DAC_ddr,DAC_B1
 		sbi		DAC_ddr,DAC_B2
-
-		;sbi		DAC_port,DAC_B2
-		;sbi		DAC_ddr,DAC_B2
 		ret
 ;-----------------------------------------------------------
 
 RFTX_enable:
 		sbi		LMX_ddr,RF_ENABLE
 		sbi		LMX_port,RF_ENABLE
-		sbi		LMX_ddr,LMX_CLK
+		cbi		LMX_ddr,LMX_CLK								;wspoldzielony
 		sbi 	LMX_ddr,LMX_DAT
 		sbi 	LMX_ddr,LMX_LE
 ret

@@ -4,7 +4,6 @@
 ;===========================================================
 
 usartsend_hex:	
-;cli
 		push 	r16											;wysyla bajt w hex na usart (R16)
 		push 	r17
 		usart_bcd_MSD r16
@@ -15,37 +14,7 @@ usartsend_hex:
 		usart_bcd_LSD r16
 		pop 	r17
 		pop 	r16
-;sei
 ret
-usartsendDecT8:
-		push 	r16
-		push 	r17
-		push	r18
-		mov 	r17,r16
-		clr 	r18
-minust11:
-		cpi		r17,10
-		brlo 	mnm10t1
-		subi 	r17,10
-		inc 	r18
-		rjmp 	minust11
-mnm10t1:	
-		ldi		r16,'0'
-		add		r16,r18										;dziesiatki
-		cpi		r18,0
-		breq	pc+2										;jesli dziesiatki 0 to niewyswietlaj
-		rcall	usartsend
-		ldi		r16,'0'
-		add		r16,r17										;jednosci
-		rcall	usartsend
-		clc
-dataPresent1:
-		pop		r18
-		pop 	r17
-		pop 	r16
-
-ret
-
 
 dispFreq:
 		rcall	usart_nl
@@ -58,73 +27,50 @@ dispFreq:
 		rcall	usartsend_hex 
 		ldi 	r16,' '
 		rcall	usartsend
-
 		loadw	r16,r17,freqRX		
-		rcall 	freqMeasRaw_ToBIN								;r16 r17 zwraca wartosc wyliczona
+		rcall 	freqMeasRaw_ToBIN							;r16 r17 zwraca wartosc wyliczona
 rjmp	display_freq_R16R17
 
-
-/*
-dispFreqLast:
-		loadw	r16,r17,freqRXLast
-rjmp	display_freq_R16R17
-
-
-dispFreq_decff:
-		push	r16
-//czesc MHz to pomiar przesuniete bajty o 7bit w prawo
-		bst	 	r16,7
-		lsl 	r17
-		bld 	r17,0										;from t flag
-		mov		r16,r17
-;czesc 100kHz
-		pop		r16
-		swap	r16
-		andi	r16,0x0F
-		;lsr		r16
-		ldiwz	kHz_part*2
-		add		r30,r16
-		adc		r31,zero
-		lpm		
-		mov		r16,r0
-		;rcall 	usartsend
-//czesc ulamkowa to 25kHz na lsb jesli przesunac o4b w prawo
-ret
-*/
-															
+ok_string:
+		ldi 	r16,'O'
+		rcall	usartsend
+		ldi 	r16,'K'
+		rcall	usartsend
+		rjmp	lf_print
+												
 ;===========================================================
 ;wysylanie ciagu znakow z czestotliwoscia na usart, 
 ;decpoint przedostatni
 ;===========================================================
 display_freq_R16R17:
-	rcall	FbinTo_string	
-	ldiwz	FREQstring+4
+		rcall	FbinTo_string	
+		ldiwz	FREQstring+4
 
-	ldi r16,'F'
-	rcall	usartsend
-	ldi r16,'='
-	rcall	usartsend
-	ld		r16,-z
-	rcall	usartsend
-	ld		r16,-z
-	rcall	usartsend
-	ld		r16,-z
-	rcall	usartsend
-	ldi r16,'.'
-	rcall	usartsend
-	ld		r16,-z
-	rcall	usartsend
+		ldi 	r16,'F'
+		rcall	usartsend
+		ldi 	r16,'='
+		rcall	usartsend
+		ld		r16,-z
+		rcall	usartsend
+		ld		r16,-z
+		rcall	usartsend
+		ld		r16,-z
+		rcall	usartsend
+		ldi 	r16,'.'
+		rcall	usartsend
+		ld		r16,-z
+		rcall	usartsend
 
-	ldi r16,'M'
-	rcall	usartsend
-	ldi r16,'H'
-	rcall	usartsend
-	ldi r16,'z'
-	rcall	usartsend
+		ldi 	r16,'M'
+		rcall	usartsend
+		ldi 	r16,'H'
+		rcall	usartsend
+		ldi 	r16,'z'
+		rcall	usartsend
 lf_print:
 #ifdef LF_ENDSTR
-	ldi r16,10;LF (line feed rozpoznawany jako koniec lniii przez readline w pytonie)
-	rcall	usartsend
+		ldi 	r16,10										;LF (line feed rozpoznawany jako koniec lniii przez readline w pytonie)
+		rcall	usartsend
 #endif
 	ret
 															
@@ -221,3 +167,32 @@ USARTbus:
 		pop 	r16
 ret
 ;===========================================================
+.exit
+
+dispFreqLast:
+		loadw	r16,r17,freqRXLast
+rjmp	display_freq_R16R17
+
+
+dispFreq_decff:
+		push	r16
+//czesc MHz to pomiar przesuniete bajty o 7bit w prawo
+		bst	 	r16,7
+		lsl 	r17
+		bld 	r17,0										;from t flag
+		mov		r16,r17
+;czesc 100kHz
+		pop		r16
+		swap	r16
+		andi	r16,0x0F
+		;lsr		r16
+		ldiwz	kHz_part*2
+		add		r30,r16
+		adc		r31,zero
+		lpm		
+		mov		r16,r0
+		;rcall 	usartsend
+//czesc ulamkowa to 25kHz na lsb jesli przesunac o4b w prawo
+ret
+
+			

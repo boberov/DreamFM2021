@@ -4,7 +4,7 @@
 /*==========================================================
 AT90S2313 XTAL 4MHz	
 przerwanie OVF0 i flaga FT0presc_f 61Hz
-czestotliwosc zlicza counter1
+czestotliwosc zlicza counter1  (wejscie licznika wspoldzielone z CK microwire syntezera)
 ============================================================*/
 
 /*
@@ -17,17 +17,35 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 - w przypadku ciaglego strojenia przez okreslony czas nie jest zmieniana czestotliwsc nadajnika (trwa oczekiwania na dogonienie tej F przez skaner odbiornika)
 	jezeli po tym czasie nadal trwa strojenie odbiornika to znowu jest ustaiana F nadajnika z offsetem (oczywiscie offset jest + lub - zaleznie od kierunku strojenia)
 */
+
+/*
+	Obslugiwane rozkazy:
+	Odebranie usartem rozkazu 'TXon' zalacza nadajnik (po starcie jest domyslnie wylaczony)
+	Rozkaz 'TXoff' wylacza nadajnik (zasilanie LDO)
+	Rozkaz z parametrem 'TXpowX' zmienia moc nadajnika X=0-3
+	Rozkaz z parametrem 'TXfrq107.8'	ustawia czestotliwosc 107.8MHz
+	Rozkaz z parametrem 'TXfrq87.7'		ustawia czestotliwosc 87.7MHz
+	Rozkaz z parametrem 'TXfrq087.7'	ustawia czestotliwosc 87.7MHz
+	Rozkaz z parametrem 'TXshd'			przelacza procesor w shutdown (generator kwarcowy wylaczony, wszystkie zasilania odlaczone)
+
+*/
+
+										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 #define UBRR_VAL		12				;19200 (raspi ma cos skopane i nie obsluguje 250kb, a pozniej najwieksza predkosc z malym bledem do 19200) i tak jest dramatycznie niska predkosc maksymalna 250kb/s dla 4MHz zegara
 #define FREQ_INTERM		-107			;posrednia w 100kHz o jaka trzeba przesunac czestotliwosc dla zgodnosci wskazan
 #define	BAND_LOW_MHZ	875
 #define	BAND_HIGH_MHZ	1080
+
+#define	BAND_LOW_FRAW	0x31			;surowa wartosc MSB z czestosciomierza do okreslenia czy pomiary sa sprawne - trzeba zmienic jesli posrednia sie zmieni
+#define	BAND_HIG_FRAW	0x3C
+
 ;#define OVER_BAND_RETU					;jesli skanowanie i blisko granicy to ustawia szybciej nadajnik na drugim koncu pasma
 ;#define FREQ_DBG						;wysylanie na usart aktualnie zmierzonej czestotliwosci (surowizna z jitterem duzym)
 #define	SYM_HYST						;jesli histereza symetryczna wyniku pomiaru
-#define SCAN_F_SHIFT	2				;x100kHz przesuniecie instalacji nadajnika
+#define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
 ;#define SCAN_DETECT_TO	6				;jak szybko musi byc zmieniana czestotliwosc zeby uznac ze to skanowanie a nie przelaczanie pojedyncze
-#define SCAN_REATEMPT	60				;co jaki czas ponowic ustawienie czetotliwosci TX
+#define SCAN_REATEMPT	30				;co jaki czas ponowic ustawienie czetotliwosci TX
 #define STAB_FREQ		30				;po jakim czasie uznac zmierzona F za stabilna (61=1sek)
 #define	LOCK_TIMEOUT	10				;czas w sekundach po jakim blad pll jesli nie wykryl choc chwile 1 na wyjsciu FO/LD
 
@@ -39,6 +57,7 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 .include	"LMX2306.asm"				;driver syntezera
 .include	"usart.asm"					;procedury wysylania usart
 .include	"usartRX.asm"				;procedury odbiornka usart
+;.include	"IR_remote.asm"				;obsluga zdalnego sterowania odbiornikiem
 ;.include	"eepReal90s.asm"			;ten avr bez dobrego resetu uwielbia psuc eeprom
 
 .def	lockPresc=	R13					;preskaler czasu bledu pll
@@ -55,7 +74,7 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 
 .cseg
 welcome_version:
-.db	"Dream FM 2001 TX FW V0.1",0,0
+.db	"Dream FM 2001 TX FW V1.0",0,0
 kHz_part:
 .db	"0011233455667889"
 /*
@@ -102,7 +121,7 @@ Init:
 		oti		ucr, 1<<TXEN | 1<<RXEN						;RXCIE TXCIE UDRIE RXEN TXEN CHR9 RXB8 TXB8 
 		oti		ubrr,UBRR_VAL 					
 		
-		sti		TXpower,2									;default power
+		sti		TXpower,1									;default power
 ;------------ port config ----------------------------------
 		cbi		LMX_ddr,LMX_CLK								;kierunek dla freqmeter
 		sbi		LMX_port,LMX_CLK							;pullup
@@ -143,6 +162,7 @@ Init:
 		storew	LMXfreqMHz10,r16,r17
 		sti		LMXfreqMHz10+2,0
 		rcall	LMX2306_Init
+		clear	freqStabilC									;bez skasowania zmiennej czasowej po starcie moze niezauwazyc aktualnej czestotliwosci zmierzonej
 mainloop:
 ;======================== main =============================
 ;---------------------- main loop --------------------------	
@@ -269,10 +289,10 @@ ret
 ;-----------------------------------------------------------														
 ;jesli offset jest zerowy, to w przypadku przekroczonych granic 
 ;nie ustawia drugiego konca pasma
-tune_offset:	
+tune_offset:
 		loadw	r16,r17,freqRXLast							;pobierana odfiltrowana czestotliwosc zmierzona
 		rcall 	freqMeasRaw_ToBIN							;r16 r17 zwraca wartosc wyliczona
-rcall freqBinAddIM_freq
+		rcall freqBinAddIM_freq								;dodanie posrednie jczetotliwosci
 		add		r16,r28										;dodaj offset
 		adc		r17,r29
 
@@ -285,6 +305,8 @@ rcall freqBinAddIM_freq
 		pop 	r17
 		pop 	r16
 rjmp	display_freq_R16R17	
+
+
 
 ;-----------------------------------------------------------
 ;zadania wykonywane z F= 61.03515625Hz (4MHz/1024/256)
@@ -327,7 +349,27 @@ procXHz:
 wait_presc:
 ret2:
 ret
-
+;-----------------------------------------------------------
+;czestotliwosczmierzona poza zakresem
+out_of_freq:
+		cpi		r17,0
+		breq	freqm_detached								;jesli niepodlaczony wogole czestosciomierz to wartosc zerowa pomiaru
+		inc		R7											;zeby niezasypac konsoli 
+		brne	ret2
+		ldi 	r16,'F'
+		rcall	usartsend
+		ldi 	r16,'R'
+		rcall	usartsend
+		ldi 	r16,'Q'
+		rcall	usartsend
+		ldi 	r16,'!'
+		rcall	usartsend
+		rcall	lf_print
+		clr 	r16
+		rcall	tx_powersetr16								;w razie bledu zmniejsz moc jesli byla duza
+freqm_detached:
+ret
+;-----------------------------------------------------------
 ;---- analiza czestotliwosci i wysylka pomiaru na usart ----
 noFreq_changes:
 		incrs 	freqStabilC									;licznik stablinej czestotliwosci
@@ -348,6 +390,12 @@ freqAnalise:
 ;trzeba wyeliminowac jitter pomiaru 2lsb (max20kHz zmiany)
 ;-----------------------------------------------------------
 		loadW 	r16,r17,freqRX
+;---- czy zmiezona czestotliwosc w zakresie ----------------
+		cpi		r17,	BAND_HIG_FRAW 								;tylko starsza czesc testowana (zgrubnesprawdzenie czy pomiar czestotliwosci jest poprawny)
+		brsh	out_of_freq
+		cpi		r17,	BAND_LOW_FRAW 
+		brlo	out_of_freq
+;-----------------------------------------------------------
 		loadW	r18,r19,freqRXLast
 
 		cpw		r16,r17,r18,r19
@@ -483,6 +531,7 @@ readFreq_DW:
 		ld		r17,z
 toLow_freq:
 ret
+
 												
 ;zerowanie 16b czestotliwosci z bufora kolowego
 ZeroFreq_DW:
@@ -503,7 +552,7 @@ ZeroFreq_DW:
 		st		z,zero
 ret
 
-;dodanei czestotliwosci posredniej
+;dodanie czestotliwosci posredniej
 freqBinAddIM_freq:
 		ldiwx	FREQ_INTERM
 		addw	r16,r17,r26,r27
@@ -547,6 +596,110 @@ mul_loop:
 		mov 	r16,r24
 		mov 	r17,r25
 ret
+powerdown_loop:
+		cli
+		in	 	r17, USR
+		sbrs 	r17,UDRE
+		rjmp 	powerdown_loop
+
+		oti 	wdtcr,0b00011000							;wylaczanie wdt
+		oti 	wdtcr,0b00010000
+
+		out		portb,zero
+		out		portd,zero
+		out		ddrb,zero
+		out		ddrd,zero
+		oti		mcucr, 1<<SE|1<<SM							;power down mode
+		sleep
+
+
 ;-----------------------------------------------------------
 
+;substytut rozkazu mul - kodopozeracz ale za to szybki :)
+mul_sbstR17R21:
 
+
+;***************************************************************************
+;*
+;* "mpy8u" - 8x8 Bit Unsigned Multiplication
+;*
+;* This subroutine multiplies the two register variables mp8u and mc8u.
+;* The result is placed in registers m8uH, m8uL
+;*  
+;* Number of words	:34 + return
+;* Number of cycles	:34 + return
+;* Low registers used	:None
+;* High registers used  :3 (mc8u,mp8u/m8uL,m8uH)	
+;*
+;* Note: Result Low byte and the multiplier share the same register.
+;* This causes the multiplier to be overwritten by the result.
+;*
+;***************************************************************************
+
+;***** Subroutine Register Variables
+
+.def	mc8u	=r17	;multiplicand
+.def	mp8u	=r21	;multiplier
+.def	m8uL	=r21//R0;result Low byte
+.def	m8uH	=r1		;result High byte
+
+	push	mc8u
+	push	mp8u
+;***** Code
+
+mpy8u:	
+	clr	m8uH		;clear result High byte
+	lsr	mp8u		;shift multiplier
+	
+	brcc	noad80		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad80:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad81		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad81:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad82		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad82:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad83		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad83:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad84		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad84:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad85		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad85:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc noad86		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad86:	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier
+
+	brcc	noad87		;if carry set
+	add	m8uH,mc8u	;    add multiplicand to result High byte
+noad87:	
+	ror	m8uH		;shift right result High byte 
+	ror	m8uL		;rotate right result L byte and multiplier	
+
+;****
+	mov		r0,r21
+	pop		mp8u
+	pop		mc8u
+ret
