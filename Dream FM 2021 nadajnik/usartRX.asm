@@ -5,9 +5,9 @@
 ;parsowanie danych z usartu i wykonywanie rozkazow
 ;===========================================================
 
-.equ LF_CHAR			=10
-.equ LF_Tout			=int(61*0.1)						
-.equ FTAB_SIZE 			=5 									;ilosc wpisow w tablicy
+.equ LF_CHAR			=13
+.equ LF_Tout			=int(30*2)						
+.equ FTAB_SIZE 			=6 									;ilosc wpisow w tablicy
 
 code_table:
 /*
@@ -48,6 +48,8 @@ code_table:
 .dw tx_power
 .db "TXfrq",0x01											;parametr moze miec 4 lub 5B 					
 .dw tx_freq
+.db "TXdim",0x01
+.dw tx_dimmer
 default_ret:
 ret
 
@@ -55,10 +57,16 @@ ret
 ;------------------USART0_RX_IRQ----------------------------
 ;--zapis odebranych bajtow do bufora kolowego---------------
 ;normalnie to jest przerwanie URX:
-usart_rx_write:		
-		in	 	r16,USR
-		sbrs 	r16,RXC
-		rjmp 	USART_no_CharRX
+URX_irq:
+
+		sbr		SysFlags, 1<<MeasCancel_f
+		in		r2,sreg
+		push 	r16
+		push 	r30
+		push 	r31
+;		in	 	r16,USR
+;		sbrs 	r16,RXC
+;		rjmp 	USART_no_CharRX
 		clear	URXtoutC									;timeot odbioru danych
 
 		ldiwz	URXbuffer									;bufor danych
@@ -73,7 +81,8 @@ usart_rx_write:
 		cpi		r16,LF_CHAR									;line feed wymusza przeparsowanie linii
 		brne	no_lineend									;uwaga bajt konca linii nie jest wpisywany do bufora
 		sti		URXtoutC,LF_Tout-1
-		ret		
+		;rcall	usart_rx_buffer
+		rjmp	USART_no_CharRX		
 no_lineend:	
 		st		z,r16
 		lds		r16,URXpWR
@@ -81,12 +90,17 @@ no_lineend:
 		andi	r16,RXB_SIZE-1
 		sts		URXpWR,r16
 USART_no_CharRX:
-ret
+		pop 	r31
+		pop 	r30
+		pop 	r16
+		out		sreg,r2
+
+reti
 ;-----------------------------------------------------------
 
 usart_rx_buffer:
 ;-------------------timeout--------------------------------
-		incrs	URXtoutC
+		lds		r16,URXtoutC
 		cpi		r16,LF_Tout									;timeout z URXtoutC
 		brne	nochar_in_buf								;po odebraniu bajtu usartem czekany czas timeout zanim sciagany bufor
 ;----------------odbior klawiszy----------------------------															
@@ -225,7 +239,7 @@ tx_disable:
 ret
 
 tx_enable:
-		sbic	LMX_port,RF_ENABLE							;jesli tx wylaczony niewlaczaj ponownie
+		sbic	LMX_port,RF_ENABLE							;jesli tx wlaczony nie wlaczaj ponownie
 		rjmp	ret2
 
 		rcall	RFTX_enable
@@ -233,15 +247,11 @@ tx_enable:
 		rjmp	ok_string
 ret
 tx_power:
+		rcall	load_B
 		rcall 	usart_nl
-;		ldiwz	lab_txpow
-;		rcall	usart_romstring
-		ldiwx	URXparam+1									;bufor w ram
-		ld		r16,x
-		subi	r16,'0'
 		sts		txpower,r16
 		rcall	tx_powerset
-	rjmp	ok_string
+		rjmp	ok_string
 
 tx_freq:
 		rcall 	usart_nl
@@ -267,7 +277,12 @@ tx_freq:
 		rjmp	ok_string
 bad_param:
 ret
-															
+
+tx_dimmer:													;program uzywany do zmiany soft pwm po odebraniu rozkazu TXdimX
+		rcall	load_B
+		rcall 	usart_nl
+		mov		softPWmV,r16
+		rjmp	ok_string												
 paramto_txfreq:
 		ldiwz	0
 ;------x1000--------
@@ -304,10 +319,9 @@ no_1000x:													;jesli pierwsza cyfra to nie zero ani jeden wtedy jest uwa
 		adc		r31,zero
 ret
 ;-----------------------------------------------------------
-
-
-/*
+;pobieranie bajtu z parametru w hex
 load_B:
+		ldiwx	URXparam+1	
 		ld		r16,x+										;MSN starsze nibble
 		rcall	hex_To_bin
 		mov		r17,r16
@@ -326,7 +340,7 @@ numbers_msb:
 lett_msb:
 		andi	r16,0x0F
 ret	
-*/
+
 /*
 dd_loop:
 	ld		r16,x+

@@ -3,7 +3,7 @@
 ;=================== Dream_FM_TX.asm =======================
 /*==========================================================
 AT90S2313 XTAL 4MHz	
-przerwanie OVF0 i flaga FT0presc_f 61Hz
+przerwanie OVF0 i flaga F30Hz_f 30Hz
 czestotliwosc zlicza counter1  (wejscie licznika wspoldzielone z CK microwire syntezera)
 ============================================================*/
 
@@ -22,14 +22,22 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 	Obslugiwane rozkazy:
 	Odebranie usartem rozkazu 'TXon' zalacza nadajnik (po starcie jest domyslnie wylaczony)
 	Rozkaz 'TXoff' wylacza nadajnik (zasilanie LDO)
-	Rozkaz z parametrem 'TXpowX' zmienia moc nadajnika X=0-3
+	Rozkaz 'TXshd'	usypia calkowicie procek (generator kwarcowy wylaczony, wszystkie zasilania odlaczone)
+
+	Rozkaz z parametrem 'TXpowXX' zmienia moc nadajnika X=00 - 03 (hex)
+	Rozkaz z parametrem 'TXdimXX' zmienia wartosc PWM X=00 - 80 (hex)
 	Rozkaz z parametrem 'TXfrq107.8'	ustawia czestotliwosc 107.8MHz
 	Rozkaz z parametrem 'TXfrq87.7'		ustawia czestotliwosc 87.7MHz
 	Rozkaz z parametrem 'TXfrq087.7'	ustawia czestotliwosc 87.7MHz
-	Rozkaz z parametrem 'TXshd'			przelacza procesor w shutdown (generator kwarcowy wylaczony, wszystkie zasilania odlaczone)
 
+
+V1.1
+bramkowanie czestosiomierza zwiekszone do ~30Hz, lsb w mierniku sa odrzucane (bezuzyteczne z owodu jitteru)
+odbior znakow usartem przerwaniowy (pomiar odrzucany jesli wystapilo przerwanie usartu)
+parametry dla mocy i dim w hex 8bit
+soft pwm do regulacji jasnosci vfd
 */
-//podejzane f 89.5MHz po nagzaniu, 90.9 na zimno
+
 										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 #define UBRR_VAL		12				;19200 (raspi ma cos skopane i nie obsluguje 250kb, a pozniej najwieksza predkosc z malym bledem do 19200) i tak jest dramatycznie niska predkosc maksymalna 250kb/s dla 4MHz zegara
@@ -45,8 +53,8 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 ;#define	SYM_HYST					;jesli histereza symetryczna wyniku pomiaru
 #define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
 ;#define SCAN_DETECT_TO	6				;jak szybko musi byc zmieniana czestotliwosc zeby uznac ze to skanowanie a nie przelaczanie pojedyncze
-#define SCAN_REATEMPT	30				;co jaki czas ponowic ustawienie czetotliwosci TX
-#define STAB_FREQ		30				;po jakim czasie uznac zmierzona F za stabilna (61=1sek)
+#define SCAN_REATEMPT	7				;co jaki czas ponowic ustawienie czetotliwosci TX
+#define STAB_FREQ		7				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
 #define	LOCK_TIMEOUT	10				;czas w sekundach po jakim blad pll jesli nie wykryl choc chwile 1 na wyjsciu FO/LD
 
 
@@ -61,114 +69,73 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 ;.include	"eepReal90s.asm"			;ten avr bez dobrego resetu uwielbia psuc eeprom
 
 .def	lockPresc=	R13					;preskaler czasu bledu pll
-.def 	zero= 		R14
-.def	one= 		R15
+.def	one= 		R14
+.def 	zero= 		R15
 .def	SysFlags=	R22
-
+.def	softPWmC=	r10					;licznik pwm
+.def	softPWmV=	r11					;wartosc pwm
+.def	prescTim0=	r12
 
 ;-----bity SysFlags-----
-.equ	FT0presc_f		=	7			;flaga przerwania
+.equ	F30Hz_f			=	7			;flaga 30Hz ustawiana w przerwaniu timera
+.equ	F62kHz_f		=	6			;flaga 32kHz ustawiana w przerwaniu
 .equ	MeasReady_f		=	1			;pomiar czestotliwosci gotowy
 .equ	MeasCancel_f	=	2			;pomiar pomijany (wspoldzielone clk i transmisja po uwire)
 
-
+.equ	PWM_port=		portb
+.equ	PWM_ddr=		ddrb
+.equ	PWM_portNr=		3
 .cseg
 welcome_version:
-.db	"Dream FM 2001 TX FW V1.0",0,0
-kHz_part:
-.db	"0011233455667889"
-/*
-takie sa rzeczywiste wartosci czestotliwosci czesci ulamkowej 5 najmlodszych bitow bez najmlodszego
-.db	"0000"
-.db	"0625"
-.db	"1250"
-.db	"1875"
-.db	"2500"
-.db	"3125"
-.db	"3750"
-.db	"4375"
-.db	"5000"
-.db	"5625"
-.db	"6250"
-.db	"6875"
-.db	"7500"
-.db	"8125"
-.db	"8750"
-.db	"9375"
-*/
+;.db	"Dream FM 2021 TX V1.1",0
+.db		"Dream",0
+
+kHz_part:								;tablica zawiera zaokraglenie czesci ulamkowej do latwego przeliczenia f zmierzonej z dziwacznym czasem bramkowania
+.db	"0112334556678899"
+
 //======================== main ============================
-ramclearR19:
-;-------------------ramclear--------------------------------
-;kasuje od max pozycji-2 ram w dol (kasuje stos !)
-		ldiw	r19,r20,(SRAM_START)
-		ldi		r30,low(RAMEND-2)
-		ldi		r31,high(RAMEND-2)
-ramclearloop:
-		st 		-z,r15
-		cp	 	r30,r19										;pierwsze 16B niekasowane lub kasowane wszystko
-		cpc		r31,r20										;pierwsza strona 256B zarezerowwana na rejestry
-		brne 	ramclearloop
-ret
+
+
 ;-------------------main start------------------------------
 Init:
 		wdr
-;		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
+		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
 		oti 	SPL,low(RAMEND)
-		clr 	r14
-		clr 	r15
-		inc		r15
-		;ldi		T0divider,0x05
-		oti		ucr, 1<<TXEN | 1<<RXEN						;RXCIE TXCIE UDRIE RXEN TXEN CHR9 RXB8 TXB8 
-		oti		ubrr,UBRR_VAL 					
-		
+		clr 	zero
+		clr 	one
+		inc		one
+		oti		ucr, 1<<TXEN | 1<<RXEN | 1<<RXCIE			;RXCIE TXCIE UDRIE RXEN TXEN CHR9 RXB8 TXB8 
+		oti		ubrr,UBRR_VAL 			
 		sti		TXpower,1									;default power
+		clear	freqStabilC									;bez skasowania zmiennej czasowej po starcie moze niezauwazyc aktualnej czestotliwosci zmierzonej
 ;------------ port config ----------------------------------
-		cbi		LMX_ddr,LMX_CLK								;kierunek dla freqmeter
-		sbi		LMX_port,LMX_CLK							;pullup
-		cbi 	LMX_ddr,LMX_FOLD
-		sbi		LMX_port,LMX_FOLD
-		rcall	RFTX_enable											;zasilanie czesci radiowej
-		rcall	tx_powerset
+		sbi		PWM_port,PWM_portNr
+		sbi		PWM_ddr,PWM_portNr
 ;------------ counter 0 ------------------------------------
 		oti		tccr0,0
-		oti		tccr0,0<<CS00|0<<CS01|1<<CS02				;presc 256 (/256 = 61.03515625hz)
+		;oti		tccr0,0<<CS00|0<<CS01|1<<CS02				;presc 256 (/256 = 61.03515625hz)
+		;oti		tccr0,1<<CS00|0<<CS01|1<<CS02				;presc 1024 (licznik T0 skracany w przerwaniu)
+		oti		tccr0,1<<CS00|1<<CS01|0<<CS02				;presc 64 irq =62.5kHz
 
 ;------------ counter 1 ------------------------------------
 		oti		tccr1a,0
 		oti		tccr1b,1<<CS10|1<<CS11|1<<CS12				;ext clock input T1
 ;-----------------------------------------------------------
-
-;zmiescimy sie z pomiarem czestotliwosci w 16b+1 bit flagi ovf
-;dla 800kHz w 1/10s = 80000 <128000
 		oti 	timsk,0<<TOIE1|1<<TOIE0						;overflow interrupt
-		oti		tcnt0,0x05
-
 		oti		mcucr,1<<ISC00|1<<ISC01						;narastajace zbocze int0 ustawi flage
-;trzeba bedzie odmierzac 100ms lub 50ms interwaly do mierzenia czestotliwosci
-;zrobi sie to na timerze 0 z preskalerem 4MHz/64 /250 = 250Hz /25 = 10Hz
-;poniewaz te przedpotopowe peryferia sa ogranczone trzeba w przerwaniu modyfikowac tcnt by uzyskac podzial przez 250 nie 256
-
-;lepiej mierzyc czesciej np 128Hz wtedy dla preskalera 128 nie trzeba bedzie juz nic dodatkowo obliczac
-;dla podzialu 1024 i 256 z 4MHz wychodzi 61.03515625 to jest zadawalajaca czestosc probkowania da rozdzielczosc 7,8kHz + jitter = 15kHz do 100kHz jest zapas
 
 		rcall	usart_nl
 		ldiwz 	welcome_version*2
 		rcall 	usart_romstring
-
 		sei
-.equ freq=1080
-		clr		r18
-		ldiw 	r16,r17,freq
-		storew	LMXfreqMHz10,r16,r17
-		sti		LMXfreqMHz10+2,0
-		rcall	LMX2306_Init
-		clear	freqStabilC									;bez skasowania zmiennej czasowej po starcie moze niezauwazyc aktualnej czestotliwosci zmierzonej
 mainloop:
 ;======================== main =============================
 ;---------------------- main loop --------------------------	
 		wdr
-		sbrc 	SysFlags, FT0presc_f
-		rcall	procXHz										;zadania cykliczne 61Hz
+		sbrc 	SysFlags, F62kHz_f
+		rcall	proc_62kHz	
+		sbrc 	SysFlags, F30Hz_f
+		rcall	proc_32Hz									;zadania cykliczne xxHz
 		sbrc 	SysFlags, MeasReady_f 
 		rcall	freqAnalise									;analiza pomiaru czestotliwosci
 
@@ -183,7 +150,7 @@ FO_LF_0:
 		sbic	LMX_pin,LMX_FOLD
 		sts		LOCKtimeC,zero								;kasowanie flagi jesli stan wysoki pinu (flaga przerwania reaguje tylko na zbocze)
 ;-----------------------------------------------------------
-		rcall	usart_rx_write								;zapis danych do bufora (bez przerwaniowy)
+;		rcall	usart_rx_write								;zapis danych do bufora (bez przerwaniowy)
 		;ldi		r16, '1'
 ;		sbis	LMX_pin,LMX_FOLD
 ;		ldi 	r16,'0'
@@ -193,7 +160,50 @@ rjmp mainloop
 ;==================== main end =============================
 
 
-															
+;-----------------------------------------------------------
+;zadania cykliczne
+;-----------------------------------------------------------
+proc_62kHz:													;(62.5kHz)
+		cbr 	SysFlags, F62kHz_f
+;-------------------- usart RX -----------------------------
+		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
+ret
+proc_32Hz:
+		cbr 	SysFlags, 1<<F30Hz_f	
+		decrs	ScanActWaitC								;odlicza do zera czas
+		incrs	URXtoutC									;timeout usartRX inkrementuje do max
+;-------------- pll error detektor -------------------------
+		ldi		r16,30
+		inc		lockPresc
+		cp		lockPresc,r16
+		brlo	wait_presc
+		clr		lockPresc
+
+		sbis	LMX_port,RF_ENABLE							;jesli tx wylaczony niewysylaj bledu
+		rjmp	ret2
+
+
+		incrs	LOCKtimeC	
+		cpi		r16,LOCK_TIMEOUT
+		brlo	wait_presc
+		clear	LOCKtimeC
+
+		rcall 	usart_nl
+
+		ldi 	r16,'P'
+		rcall	usartsend
+		ldi 	r16,'L'
+		rcall	usartsend
+		ldi 	r16,'L'
+		rcall	usartsend
+		ldi 	r16,'!'
+		rcall	usartsend
+		rcall	lf_print
+;-----------------------------------------------------------
+wait_presc:
+ret2:
+ret
+
 ;===========================================================
 ; 		 *** rozpoznawanie stanu odbiornika ****
 ;===========================================================
@@ -293,6 +303,7 @@ tune_offset:
 		loadw	r16,r17,freqRXLast							;pobierana odfiltrowana czestotliwosc zmierzona
 		rcall 	freqMeasRaw_ToBIN							;r16 r17 zwraca wartosc wyliczona
 		rcall freqBinAddIM_freq								;dodanie posrednie jczetotliwosci
+		
 		add		r16,r28										;dodaj offset
 		adc		r17,r29
 
@@ -306,56 +317,13 @@ tune_offset:
 		pop 	r16
 rjmp	display_freq_R16R17	
 
-
-
-;-----------------------------------------------------------
-;zadania wykonywane z F= 61.03515625Hz (4MHz/1024/256)
-;-----------------------------------------------------------
-procXHz:
-		cbr 	SysFlags, 1<<FT0presc_f	
-		decrs	ScanActWaitC								;odlicza do zera czas
-
-;-------------------- usart RX -----------------------------
-		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
-
-;-------------- pll error detektor -------------------------
-		ldi		r16,61
-		inc		lockPresc
-		cp		lockPresc,r16
-		brlo	wait_presc
-		clr		lockPresc
-
-		sbis	LMX_port,RF_ENABLE							;jesli tx wylaczony niewysylaj bledu
-		rjmp	ret2
-
-
-		incrs	LOCKtimeC	
-		cpi		r16,LOCK_TIMEOUT
-		brlo	wait_presc
-		clear	LOCKtimeC
-
-		rcall 	usart_nl
-
-		ldi 	r16,'P'
-		rcall	usartsend
-		ldi 	r16,'L'
-		rcall	usartsend
-		ldi 	r16,'L'
-		rcall	usartsend
-		ldi 	r16,'!'
-		rcall	usartsend
-		rcall	lf_print
-;-----------------------------------------------------------
-wait_presc:
-ret2:
-ret
 ;-----------------------------------------------------------
 ;czestotliwosczmierzona poza zakresem
 out_of_freq:
 		cpi		r17,0
 		breq	freqm_detached								;jesli niepodlaczony wogole czestosciomierz to wartosc zerowa pomiaru
 		inc		R7											;zeby niezasypac konsoli 
-		brne	ret2
+		brne	freqm_detached
 		ldi 	r16,'F'
 		rcall	usartsend
 		ldi 	r16,'R'
@@ -379,6 +347,7 @@ freqAnalise:
 
 #ifdef FREQ_DBG
 		rcall	dispFreq									;surowa czestotliwosc do dbg
+		;rcall	freqStabil_Detected
 #endif
 		
 		lds		r16,freqStabilC
@@ -450,7 +419,7 @@ only_PlusTest:
 
 test_end:
 ;****
-	rcall	dispFreq
+;rcall	dispFreq
 		clear	freqStabilC									;czas po jakim sygnalizacja stabilnej czestotliwosci
 		;sti		ScanDetectC,SCAN_DETECT_TO
 cli
@@ -562,7 +531,8 @@ ret
 ;-----------------------------------------------------------
 ;rekalkulacja ostatniej wartosci zmierzonej miernikiem 
 ;z bramkowaniem 61Hz na wartosc bin dla lmxa i raspberry
-;wejscie R16:R17 wyjscie R16: r17
+;wejscie R16:R17 wyjscie R16:r17
+;problem z zaokragleniami, rowne wartosci in raw co 2MHz
 ;-----------------------------------------------------------
 freqMeasRaw_ToBIN:
 		push	r16
@@ -617,7 +587,7 @@ powerdown_loop:
 
 ;-----------------------------------------------------------
 
-;substytut rozkazu mul - kodopozeracz ale za to szybki :)
+;substytut rozkazu mul - kodupozeracz ale za to szybki :)
 mul_sbstR17R21:
 
 
@@ -705,3 +675,18 @@ noad87:
 	pop		mp8u
 	pop		mc8u
 ret
+.exit
+
+ramclearR19:
+;-------------------ramclear--------------------------------
+;kasuje od max pozycji-2 ram w dol (kasuje stos !)
+		ldiw	r19,r20,(SRAM_START)
+		ldi		r30,low(RAMEND-2)
+		ldi		r31,high(RAMEND-2)
+ramclearloop:
+		st 		-z,r15
+		cp	 	r30,r19										;pierwsze 16B niekasowane lub kasowane wszystko
+		cpc		r31,r20										;pierwsza strona 256B zarezerowwana na rejestry
+		brne 	ramclearloop
+ret
+

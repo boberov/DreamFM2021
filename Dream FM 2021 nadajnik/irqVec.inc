@@ -6,31 +6,56 @@
 .cseg
 .org 	0x00												;wektory przerwan
 		rjmp 	Init 										;Reset Handler
-.org OVF0addr	
+
+.org OVF0addr
+		rjmp	fmeas_irq	
+.org URXCaddr
+		rjmp	URX_irq		
+
+fmeas_irq:
 		in		r2,sreg
+		sbr 	SysFlags,1<<F62kHz_f
+;--------------------- soft pwm ----------------------------;dla 4MHz /64 244Hz 8bit
+		inc		softPWmC
+		cp		softPWmC,softPWmV
+		brlo	pc+2
+		sbi		PWM_port,PWM_portNr
+		brsh	pc+2
+		cbi		PWM_port,PWM_portNr
+;-----------------------------------------------------------
+
+		dec		prescTim0
+		brne	ret00	
 fmeasure:
 		push 	r16
-		push 	r17
-		
+		push 	r17		
+
+		ldi		r16,0x08									;reload prescalera
+		mov		prescTim0,r16
+
 		sbrc	SysFlags, MeasCancel_f
 		rjmp	meas_invalid
 		
 		in 		r16,tcnt1l
 		in		r17,tcnt1h
+		lsr		r17											;odrzucenie lsb wynik zliczania podzielony przez 2
+		ror 	r16
 
 		storew	freqRX+0,r16,r17
 		sbr 	SysFlags, 1<<MeasReady_f
 meas_invalid:
 		oti		tcnt1h,0									;zapis 16b jest atomowy jesli h pierwszy
-		oti		tcnt1l,9									;korekta cykli
+		oti		tcnt1l,2+2									;korekta cykli
 		
 		oti		tifr, 1<<tov1								;kasuj flage jesli aktywna
 
+		;oti		tcnt0,0x80									;skrocenie czasu do przerwania tcnt0
 	
-		cbr		SysFlags, 1<<MeasCancel_f
-		sbr 	SysFlags, 1<<FT0presc_f
+		cbr		SysFlags, 1<<MeasCancel_f					;kasuj flage niewaznego pomiaru
+		sbr 	SysFlags, 1<<F30Hz_f						;flaga przerwania cnt0
 		pop		r17
 		pop		r16
+ret00:
 		out		sreg,r2
 
 reti

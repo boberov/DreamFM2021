@@ -133,6 +133,10 @@ RFTX_enable:
 		cbi		LMX_ddr,LMX_CLK								;wspoldzielony
 		sbi 	LMX_ddr,LMX_DAT
 		sbi 	LMX_ddr,LMX_LE
+		cbi 	LMX_ddr,LMX_FOLD
+		sbi		LMX_port,LMX_FOLD
+		rcall	tx_powerset
+		rcall	LMX2306_Init
 ret
 RFTX_disable:
 		cbi		LMX_port,RF_ENABLE
