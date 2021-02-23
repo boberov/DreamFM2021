@@ -19,13 +19,14 @@ fmeasure:
 		in		r17,tcnt1h
 
 		storew	freqRX+0,r16,r17
+		sbr 	SysFlags, 1<<MeasReady_f
 meas_invalid:
 		oti		tcnt1h,0									;zapis 16b jest atomowy jesli h pierwszy
-		oti		tcnt1l,10									;korekta cykli
+		oti		tcnt1l,9									;korekta cykli
 		
 		oti		tifr, 1<<tov1								;kasuj flage jesli aktywna
 
-		sbr 	SysFlags, 1<<MeasReady_f
+	
 		cbr		SysFlags, 1<<MeasCancel_f
 		sbr 	SysFlags, 1<<FT0presc_f
 		pop		r17

@@ -29,7 +29,7 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 	Rozkaz z parametrem 'TXshd'			przelacza procesor w shutdown (generator kwarcowy wylaczony, wszystkie zasilania odlaczone)
 
 */
-
+//podejzane f 89.5MHz po nagzaniu, 90.9 na zimno
 										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 #define UBRR_VAL		12				;19200 (raspi ma cos skopane i nie obsluguje 250kb, a pozniej najwieksza predkosc z malym bledem do 19200) i tak jest dramatycznie niska predkosc maksymalna 250kb/s dla 4MHz zegara
@@ -42,7 +42,7 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 
 ;#define OVER_BAND_RETU					;jesli skanowanie i blisko granicy to ustawia szybciej nadajnik na drugim koncu pasma
 ;#define FREQ_DBG						;wysylanie na usart aktualnie zmierzonej czestotliwosci (surowizna z jitterem duzym)
-#define	SYM_HYST						;jesli histereza symetryczna wyniku pomiaru
+;#define	SYM_HYST					;jesli histereza symetryczna wyniku pomiaru
 #define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
 ;#define SCAN_DETECT_TO	6				;jak szybko musi byc zmieniana czestotliwosc zeby uznac ze to skanowanie a nie przelaczanie pojedyncze
 #define SCAN_REATEMPT	30				;co jaki czas ponowic ustawienie czetotliwosci TX
@@ -112,7 +112,7 @@ ret
 ;-------------------main start------------------------------
 Init:
 		wdr
-		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
+;		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
 		oti 	SPL,low(RAMEND)
 		clr 	r14
 		clr 	r15
@@ -391,7 +391,7 @@ freqAnalise:
 ;-----------------------------------------------------------
 		loadW 	r16,r17,freqRX
 ;---- czy zmiezona czestotliwosc w zakresie ----------------
-		cpi		r17,	BAND_HIG_FRAW 								;tylko starsza czesc testowana (zgrubnesprawdzenie czy pomiar czestotliwosci jest poprawny)
+		cpi		r17,	BAND_HIG_FRAW 						;tylko starsza czesc testowana (zgrubnesprawdzenie czy pomiar czestotliwosci jest poprawny)
 		brsh	out_of_freq
 		cpi		r17,	BAND_LOW_FRAW 
 		brlo	out_of_freq
@@ -450,11 +450,13 @@ only_PlusTest:
 
 test_end:
 ;****
+	rcall	dispFreq
 		clear	freqStabilC									;czas po jakim sygnalizacja stabilnej czestotliwosci
 		;sti		ScanDetectC,SCAN_DETECT_TO
 cli
 		loadW 	r16,r17,freqRX
 		storew 	freqRXLast,	r16,r17							;zapamietanie ostatniej zmierzonej wartosci czestotliwsoci
+		sbr		SysFlags, 1<<MeasCancel_f					;nie brany pomiar pod uwage bo cli sei zaburza timing
 
 sei																
 ;----zapis zmierzonej czestotliwosci do bufora kolowego-----
