@@ -5,8 +5,8 @@
 ;parsowanie danych z usartu i wykonywanie rozkazow
 ;===========================================================
 
-.equ LF_CHAR			=13
-.equ LF_Tout			=int(30*2)						
+.equ LF_CHAR			=10
+.equ LF_Tout			=int(3)						
 .equ FTAB_SIZE 			=6 									;ilosc wpisow w tablicy
 
 code_table:

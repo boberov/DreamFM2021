@@ -32,29 +32,30 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 
 
 V1.1
-bramkowanie czestosiomierza zwiekszone do ~30Hz, lsb w mierniku sa odrzucane (bezuzyteczne z owodu jitteru)
+bramkowanie czestosiomierza zwiekszone do ~30Hz i wyrownana z podzialem dwojkowym, lsb w mierniku sa odrzucane (bezuzyteczne z owodu jitteru)
 odbior znakow usartem przerwaniowy (pomiar odrzucany jesli wystapilo przerwanie usartu)
 parametry dla mocy i dim w hex 8bit
-soft pwm do regulacji jasnosci vfd
+soft pwm do regulacji jasnosci vfd w przrwaniu timera f ~61Hz
 */
 
-										
+#define	DEFAULT_TXON
+#define	DEFAULT_POWER	1										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 #define UBRR_VAL		12				;19200 (raspi ma cos skopane i nie obsluguje 250kb, a pozniej najwieksza predkosc z malym bledem do 19200) i tak jest dramatycznie niska predkosc maksymalna 250kb/s dla 4MHz zegara
 #define FREQ_INTERM		-107			;posrednia w 100kHz o jaka trzeba przesunac czestotliwosc dla zgodnosci wskazan
 #define	BAND_LOW_MHZ	875
 #define	BAND_HIGH_MHZ	1080
 
-#define	BAND_LOW_FRAW	0x31			;surowa wartosc MSB z czestosciomierza do okreslenia czy pomiary sa sprawne - trzeba zmienic jesli posrednia sie zmieni
-#define	BAND_HIG_FRAW	0x3C
+#define	BAND_LOW_FRAW	0x0F			;surowa wartosc MSB z czestosciomierza do okreslenia czy pomiary sa sprawne - trzeba zmienic jesli posrednia sie zmieni
+#define	BAND_HIG_FRAW	0x12
+
 
 ;#define OVER_BAND_RETU					;jesli skanowanie i blisko granicy to ustawia szybciej nadajnik na drugim koncu pasma
 ;#define FREQ_DBG						;wysylanie na usart aktualnie zmierzonej czestotliwosci (surowizna z jitterem duzym)
-;#define	SYM_HYST					;jesli histereza symetryczna wyniku pomiaru
+#define	SYM_HYST						;jesli histereza symetryczna wyniku pomiaru
 #define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
-;#define SCAN_DETECT_TO	6				;jak szybko musi byc zmieniana czestotliwosc zeby uznac ze to skanowanie a nie przelaczanie pojedyncze
-#define SCAN_REATEMPT	7				;co jaki czas ponowic ustawienie czetotliwosci TX
-#define STAB_FREQ		7				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
+#define SCAN_REATEMPT	15				;co jaki czas ponowic ustawienie czetotliwosci TX
+#define STAB_FREQ		15				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
 #define	LOCK_TIMEOUT	10				;czas w sekundach po jakim blad pll jesli nie wykryl choc chwile 1 na wyjsciu FO/LD
 
 
@@ -63,7 +64,7 @@ soft pwm do regulacji jasnosci vfd
 .include 	"dataSeg.inc"				;zmienne w RAM
 .include 	"irqVec.inc"				;vektory przerwan
 .include	"LMX2306.asm"				;driver syntezera
-.include	"usart.asm"					;procedury wysylania usart
+.include	"usartTX.asm"				;procedury wysylania usart
 .include	"usartRX.asm"				;procedury odbiornka usart
 ;.include	"IR_remote.asm"				;obsluga zdalnego sterowania odbiornikiem
 ;.include	"eepReal90s.asm"			;ten avr bez dobrego resetu uwielbia psuc eeprom
@@ -78,7 +79,7 @@ soft pwm do regulacji jasnosci vfd
 
 ;-----bity SysFlags-----
 .equ	F30Hz_f			=	7			;flaga 30Hz ustawiana w przerwaniu timera
-.equ	F62kHz_f		=	6			;flaga 32kHz ustawiana w przerwaniu
+.equ	F15kHz_f		=	6			;flaga 32kHz ustawiana w przerwaniu
 .equ	MeasReady_f		=	1			;pomiar czestotliwosci gotowy
 .equ	MeasCancel_f	=	2			;pomiar pomijany (wspoldzielone clk i transmisja po uwire)
 
@@ -87,16 +88,11 @@ soft pwm do regulacji jasnosci vfd
 .equ	PWM_portNr=		3
 .cseg
 welcome_version:
-;.db	"Dream FM 2021 TX V1.1",0
-.db		"Dream",0
-
-kHz_part:								;tablica zawiera zaokraglenie czesci ulamkowej do latwego przeliczenia f zmierzonej z dziwacznym czasem bramkowania
-.db	"0112334556678899"
-
-//======================== main ============================
+.db	"Dream FM 2021 Transmitter V1.1",0,0
 
 
-;-------------------main start------------------------------
+
+;======================== main =============================
 Init:
 		wdr
 		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
@@ -106,16 +102,16 @@ Init:
 		inc		one
 		oti		ucr, 1<<TXEN | 1<<RXEN | 1<<RXCIE			;RXCIE TXCIE UDRIE RXEN TXEN CHR9 RXB8 TXB8 
 		oti		ubrr,UBRR_VAL 			
-		sti		TXpower,1									;default power
+		sti		TXpower,DEFAULT_POWER						;default power
 		clear	freqStabilC									;bez skasowania zmiennej czasowej po starcie moze niezauwazyc aktualnej czestotliwosci zmierzonej
 ;------------ port config ----------------------------------
 		sbi		PWM_port,PWM_portNr
 		sbi		PWM_ddr,PWM_portNr
 ;------------ counter 0 ------------------------------------
 		oti		tccr0,0
-		;oti		tccr0,0<<CS00|0<<CS01|1<<CS02				;presc 256 (/256 = 61.03515625hz)
+		oti		tccr0,0<<CS00|0<<CS01|1<<CS02				;presc 256 (/256 = 61.03515625hz)
 		;oti		tccr0,1<<CS00|0<<CS01|1<<CS02				;presc 1024 (licznik T0 skracany w przerwaniu)
-		oti		tccr0,1<<CS00|1<<CS01|0<<CS02				;presc 64 irq =62.5kHz
+		;oti		tccr0,1<<CS00|1<<CS01|0<<CS02				;presc 64 irq =62.5kHz
 
 ;------------ counter 1 ------------------------------------
 		oti		tccr1a,0
@@ -127,13 +123,15 @@ Init:
 		rcall	usart_nl
 		ldiwz 	welcome_version*2
 		rcall 	usart_romstring
+#ifdef DEFAULT_TXON
+		rcall	RFTX_enable
+#endif
 		sei
 mainloop:
-;======================== main =============================
 ;---------------------- main loop --------------------------	
 		wdr
-		sbrc 	SysFlags, F62kHz_f
-		rcall	proc_62kHz	
+		sbrc 	SysFlags, F15kHz_f
+		rcall	proc_15kHz	
 		sbrc 	SysFlags, F30Hz_f
 		rcall	proc_32Hz									;zadania cykliczne xxHz
 		sbrc 	SysFlags, MeasReady_f 
@@ -160,11 +158,12 @@ rjmp mainloop
 ;==================== main end =============================
 
 
+
 ;-----------------------------------------------------------
 ;zadania cykliczne
 ;-----------------------------------------------------------
-proc_62kHz:													;(62.5kHz)
-		cbr 	SysFlags, F62kHz_f
+proc_15kHz:													;(15.625kHz)
+		cbr 	SysFlags, F15kHz_f
 ;-------------------- usart RX -----------------------------
 		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
 ret
@@ -360,9 +359,9 @@ freqAnalise:
 ;-----------------------------------------------------------
 		loadW 	r16,r17,freqRX
 ;---- czy zmiezona czestotliwosc w zakresie ----------------
-		cpi		r17,	BAND_HIG_FRAW 						;tylko starsza czesc testowana (zgrubnesprawdzenie czy pomiar czestotliwosci jest poprawny)
+		cpi		r17,	BAND_HIG_FRAW+1	 					;tylko starsza czesc testowana (zgrubnesprawdzenie czy pomiar czestotliwosci jest poprawny)
 		brsh	out_of_freq
-		cpi		r17,	BAND_LOW_FRAW 
+		cpi		r17,	BAND_LOW_FRAW
 		brlo	out_of_freq
 ;-----------------------------------------------------------
 		loadW	r18,r19,freqRXLast
@@ -421,7 +420,6 @@ test_end:
 ;****
 ;rcall	dispFreq
 		clear	freqStabilC									;czas po jakim sygnalizacja stabilnej czestotliwosci
-		;sti		ScanDetectC,SCAN_DETECT_TO
 cli
 		loadW 	r16,r17,freqRX
 		storew 	freqRXLast,	r16,r17							;zapamietanie ostatniej zmierzonej wartosci czestotliwsoci
@@ -529,45 +527,16 @@ freqBinAddIM_freq:
 		addw	r16,r17,r26,r27
 ret
 ;-----------------------------------------------------------
-;rekalkulacja ostatniej wartosci zmierzonej miernikiem 
-;z bramkowaniem 61Hz na wartosc bin dla lmxa i raspberry
-;wejscie R16:R17 wyjscie R16:r17
-;problem z zaokragleniami, rowne wartosci in raw co 2MHz
+;ze wzgledu na bramkowanie z czasem  15,625/360 wystarczy  
+;przez wielo dwojke dla uzyskania 1000raw = 100.0MHz
 ;-----------------------------------------------------------
 freqMeasRaw_ToBIN:
-		push	r16
-		bst	 	r16,7										;czesc calkowita MHz to przesuniete bajty o 7bit w prawo
-		lsl 	r17
-		bld 	r17,0
-		mov		r16,r17
-
-		ldi 	r18,10
-		clr 	r24
-		clr		r25
-mul_loop:
-		add 	r24,r17										;r24:R25 mnozone x10
-		adc		r25,zero
-		dec 	r18
-		brne 	mul_loop
-
-		;lds		r16,freqRXlast								;wyciagana bedzie czesc ulamkowa .100kHz
-		pop		r16
-		lsr		r16
-		lsr 	r16
-		lsr		r16
-		andi	r16,0x0F
-		ldiwz	kHz_part*2									;tablica z 16 wartosciami czesci ulamkowej format char 0-9
-		add		r30,r16
-		adc		r31,zero
-		lpm		;do R0 zapisuje		
-		mov		r16,r0										;niesamowite ze stare avr-y nie mialy nawet normalnej instrukcji LPM (z wyborem rejestru docelowego)
-		subi 	r16,'0'										;konwersjachar na bin
-		add 	r24,r16
-		adc		r25,zero
-															
-		mov 	r16,r24
-		mov 	r17,r25
+		lsr r17
+		ror r16
+		lsr r17
+		ror r16
 ret
+
 powerdown_loop:
 		cli
 		in	 	r17, USR
@@ -690,3 +659,38 @@ ramclearloop:
 		brne 	ramclearloop
 ret
 
+/*
+		push	r16
+		bst	 	r16,7										;czesc calkowita MHz to przesuniete bajty o 7bit w prawo
+		lsl 	r17
+		bld 	r17,0
+		mov		r16,r17
+
+		ldi 	r18,10
+		clr 	r24
+		clr		r25
+mul_loop:
+		add 	r24,r17										;r24:R25 mnozone x10
+		adc		r25,zero
+		dec 	r18
+		brne 	mul_loop
+
+		;lds		r16,freqRXlast								;wyciagana bedzie czesc ulamkowa .100kHz
+		pop		r16
+		lsr		r16
+		lsr 	r16
+		lsr		r16
+		andi	r16,0x0F
+		ldiwz	kHz_part*2									;tablica z 16 wartosciami czesci ulamkowej format char 0-9
+		add		r30,r16
+		adc		r31,zero
+		lpm		;do R0 zapisuje		
+		mov		r16,r0										;niesamowite ze stare avr-y nie mialy nawet normalnej instrukcji LPM (z wyborem rejestru docelowego)
+		subi 	r16,'0'										;konwersjachar na bin
+		add 	r24,r16
+		adc		r25,zero
+															
+		mov 	r16,r24
+		mov 	r17,r25
+ret
+*/

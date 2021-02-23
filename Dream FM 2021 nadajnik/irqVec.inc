@@ -10,12 +10,13 @@
 .org OVF0addr
 		rjmp	fmeas_irq	
 .org URXCaddr
-		rjmp	URX_irq		
+		rjmp	URX_irq										;'usartRX.asm'	
 
-fmeas_irq:
+fmeas_irq:													;stala czestotliwosc przerwania
 		in		r2,sreg
-		sbr 	SysFlags,1<<F62kHz_f
-;--------------------- soft pwm ----------------------------;dla 4MHz /64 244Hz 8bit
+		push 	r16
+		sbr 	SysFlags,1<<F15kHz_f
+;--------------------- soft pwm ----------------------------;dla 4MHz /256 61Hz 8bit
 		inc		softPWmC
 		cp		softPWmC,softPWmV
 		brlo	pc+2
@@ -23,14 +24,16 @@ fmeas_irq:
 		brsh	pc+2
 		cbi		PWM_port,PWM_portNr
 ;-----------------------------------------------------------
-
+		oti		tcnt0,-200									;skrocenie do 200 zliczen
 		dec		prescTim0
 		brne	ret00	
 fmeasure:
-		push 	r16
+	
 		push 	r17		
+		
+		oti		tcnt0,-160									;skrocenie czasu do przerwania tcnt0 sumarycznie 360
 
-		ldi		r16,0x08									;reload prescalera
+		ldi		r16,0x01
 		mov		prescTim0,r16
 
 		sbrc	SysFlags, MeasCancel_f
@@ -45,33 +48,23 @@ fmeasure:
 		sbr 	SysFlags, 1<<MeasReady_f
 meas_invalid:
 		oti		tcnt1h,0									;zapis 16b jest atomowy jesli h pierwszy
-		oti		tcnt1l,2+2									;korekta cykli
+		oti		tcnt1l,4+2									;korekta cykli + dodatkowy offset
 		
 		oti		tifr, 1<<tov1								;kasuj flage jesli aktywna
 
-		;oti		tcnt0,0x80									;skrocenie czasu do przerwania tcnt0
 	
-		cbr		SysFlags, 1<<MeasCancel_f					;kasuj flage niewaznego pomiaru
 		sbr 	SysFlags, 1<<F30Hz_f						;flaga przerwania cnt0
 		pop		r17
-		pop		r16
 ret00:
+		pop		r16
+
+
+		cbr		SysFlags, 1<<MeasCancel_f					;kasuj flage niewaznego pomiaru
 		out		sreg,r2
 
 reti
 
 ;===========================================================
-
-
-
-
-
-
-
-
-
-
-
 
 .exit
 
