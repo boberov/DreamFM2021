@@ -2,7 +2,7 @@
 ;==================== Dream FM 2021  =======================
 ;====================== usart.asm ==========================
 ;===========================================================
-
+	
 usartsend_hex:	
 		push 	r16											;wysyla bajt w hex na usart (R16)
 		push 	r17
@@ -17,17 +17,21 @@ usartsend_hex:
 ret
 
 dispFreq:
+		lds		r30,freqRX+0
+		lds		r31,freqRX+1
 		rcall	usart_nl
 		;zmierzona czestotliwosc hexalnie
 		ldi 	r16,'>'
 		rcall	usartsend
-		lds		r16, freqRX+1
+		mov		r16, r31
 		rcall	usartsend_hex 
-		lds		r16, freqRX+0
+		mov		r16, r30
 		rcall	usartsend_hex 
 		ldi 	r16,' '
 		rcall	usartsend
-		loadw	r16,r17,freqRX		
+		;loadw	r16,r17,freqRX		
+		mov		r16,r30
+		mov		r17,r31
 		rcall 	freqMeasRaw_ToBIN							;r16 r17 zwraca wartosc wyliczona
 rjmp	display_freq_R16R17
 
@@ -154,45 +158,35 @@ usart_space:
 		push 	r16
 		push 	r17
 		ldi 	r16,' '
-		rjmp	USARTbus
+		rjmp	USARTbus0
 usartsend:
 		push 	r16
 		push 	r17
-USARTbus:
+USARTbus0:
+#ifdef MULMASTER
+		;sti 	MULmastTOtxoff,MULMASTER_TXTO
+		ldi		r17,MULMASTER_TXTO
+		sts		MULmastTOtxoff,r17
+		;sbi 	UTRX_ddr,UTX_portNr		
+		ldi		r17,1<<TXEN | 1<<RXEN | 1<<RXCIE
+		out 	ucr,r17
+#endif
+USARTbus1:
 		in	 	r17, USR
 		sbrs 	r17,UDRE
-		rjmp 	USARTbus
+		rjmp 	USARTbus1
 		out 	udr,r16
 		pop 	r17
 		pop 	r16
 ret
 ;===========================================================
-.exit
-
-dispFreqLast:
-		loadw	r16,r17,freqRXLast
-rjmp	display_freq_R16R17
-
-
-dispFreq_decff:
-		push	r16
-//czesc MHz to pomiar przesuniete bajty o 7bit w prawo
-		bst	 	r16,7
-		lsl 	r17
-		bld 	r17,0										;from t flag
-		mov		r16,r17
-;czesc 100kHz
-		pop		r16
-		swap	r16
-		andi	r16,0x0F
-		;lsr		r16
-		ldiwz	kHz_part*2
-		add		r30,r16
-		adc		r31,zero
-		lpm		
-		mov		r16,r0
-		;rcall 	usartsend
-//czesc ulamkowa to 25kHz na lsb jesli przesunac o4b w prawo
+#ifdef MULMASTER
+usart_mulmasterTout:
+		decrs 	MULmastTOtxoff
+		brcc	mulm_ret
+		;cbi 	UTRX_ddr,UTX_portNr
+		oti		ucr, 0<<TXEN | 1<<RXEN | 1<<RXCIE
+mulm_ret:
 ret
+#endif
 
-			

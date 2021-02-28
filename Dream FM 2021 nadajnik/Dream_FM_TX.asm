@@ -36,9 +36,17 @@ bramkowanie czestosiomierza zwiekszone do ~30Hz i wyrownana z podzialem dwojkowy
 odbior znakow usartem przerwaniowy (pomiar odrzucany jesli wystapilo przerwanie usartu)
 parametry dla mocy i dim w hex 8bit
 soft pwm do regulacji jasnosci vfd w przrwaniu timera f ~61Hz
+V1.2 
+obsluga multi master usart, na wypadek kolizji, nie wysyla danych o freq na zadany czas po odebraniu danych nie do siebie, oraz odlacza portTX gdy nie nadaje (jak halfduplex)
+zmiany w czasach detekcji zmian czestotliwosci i dla skanowania
+pll err ino odlaczone bo nie zmiescilo sie juz
 */
-
 #define	DEFAULT_TXON
+#define MULMASTER						;odlacza TX po wyslaniu danych na czas MULMASTER_TXTO oraz uduchamia blokowanie nadawania asynchronicznego na czas MULMASTER_RXTO
+;#define	PLL_ERROR_DET					;wysylanie asynchroniczne info ze PLL niezlapalo juz dlugi czas
+#define	MULMASTER_TXTO	10				;100 = ~10ms
+#define MULMASTER_RXTO 	6				;6 = ~100ms
+
 #define	DEFAULT_POWER	1										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
 #define UBRR_VAL		12				;19200 (raspi ma cos skopane i nie obsluguje 250kb, a pozniej najwieksza predkosc z malym bledem do 19200) i tak jest dramatycznie niska predkosc maksymalna 250kb/s dla 4MHz zegara
@@ -52,10 +60,10 @@ soft pwm do regulacji jasnosci vfd w przrwaniu timera f ~61Hz
 
 ;#define OVER_BAND_RETU					;jesli skanowanie i blisko granicy to ustawia szybciej nadajnik na drugim koncu pasma
 ;#define FREQ_DBG						;wysylanie na usart aktualnie zmierzonej czestotliwosci (surowizna z jitterem duzym)
-#define	SYM_HYST						;jesli histereza symetryczna wyniku pomiaru
+;#define	SYM_HYST					;jesli histereza symetryczna wyniku pomiaru
 #define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
-#define SCAN_REATEMPT	15				;co jaki czas ponowic ustawienie czetotliwosci TX
-#define STAB_FREQ		15				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
+#define SCAN_REATEMPT	80				;co jaki czas ponowic ustawienie czetotliwosci TX
+#define STAB_FREQ		80				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
 #define	LOCK_TIMEOUT	10				;czas w sekundach po jakim blad pll jesli nie wykryl choc chwile 1 na wyjsciu FO/LD
 
 
@@ -69,13 +77,13 @@ soft pwm do regulacji jasnosci vfd w przrwaniu timera f ~61Hz
 ;.include	"IR_remote.asm"				;obsluga zdalnego sterowania odbiornikiem
 ;.include	"eepReal90s.asm"			;ten avr bez dobrego resetu uwielbia psuc eeprom
 
-.def	lockPresc=	R13					;preskaler czasu bledu pll
 .def	one= 		R14
 .def 	zero= 		R15
-.def	SysFlags=	R22
+.def	SysFlags=	R25					;flagi systemowe
 .def	softPWmC=	r10					;licznik pwm
 .def	softPWmV=	r11					;wartosc pwm
-.def	prescTim0=	r12
+.def	prescTim0=	r12					;licznik pomocniczy odmierzania czasu przerania cnt0
+.def	lockPresc=	R13					;preskaler czasu bledu pll
 
 ;-----bity SysFlags-----
 .equ	F30Hz_f			=	7			;flaga 30Hz ustawiana w przerwaniu timera
@@ -86,16 +94,21 @@ soft pwm do regulacji jasnosci vfd w przrwaniu timera f ~61Hz
 .equ	PWM_port=		portb
 .equ	PWM_ddr=		ddrb
 .equ	PWM_portNr=		3
+
+.equ	UTRX_port=		portd
+.equ	UTRX_ddr=		ddrd
+.equ	URX_portNr=		0
+.equ	UTX_portNr=		1
 .cseg
 welcome_version:
-.db	"Dream FM 2021 Transmitter V1.1",0,0
+.db	"Dream FM 2021 Transmitter V1.2",0,0
 
 
 
 ;======================== main =============================
 Init:
 		wdr
-		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
+;		oti 	wdtcr,0b00011000							;wlacza wdt ~50ms
 		oti 	SPL,low(RAMEND)
 		clr 	zero
 		clr 	one
@@ -107,8 +120,8 @@ Init:
 ;------------ port config ----------------------------------
 		sbi		PWM_port,PWM_portNr
 		sbi		PWM_ddr,PWM_portNr
+		sbi		UTRX_port,UTX_portNr						;pullup gdy wylaczony TX
 ;------------ counter 0 ------------------------------------
-		oti		tccr0,0
 		oti		tccr0,0<<CS00|0<<CS01|1<<CS02				;presc 256 (/256 = 61.03515625hz)
 		;oti		tccr0,1<<CS00|0<<CS01|1<<CS02				;presc 1024 (licznik T0 skracany w przerwaniu)
 		;oti		tccr0,1<<CS00|1<<CS01|0<<CS02				;presc 64 irq =62.5kHz
@@ -137,17 +150,8 @@ mainloop:
 		sbrc 	SysFlags, MeasReady_f 
 		rcall	freqAnalise									;analiza pomiaru czestotliwosci
 
-;-------------- pll error detector -------------------------
-		in 		r16,GIFR									;rozpoznawanie pll lock flaga przerwania (lesze od poolingu bo sie zatrzaskuje)
-		sbrs	r16,INTF0 
-		rjmp	FO_LF_0
-		sts		LOCKtimeC,zero								;jesli wykryto zbocze w jakims momencie (asynchronicznie)
-		ldi		r16, 1<<INTF0								;skasowanie flagi 
-		out		GIFR,r16
-FO_LF_0:
-		sbic	LMX_pin,LMX_FOLD
-		sts		LOCKtimeC,zero								;kasowanie flagi jesli stan wysoki pinu (flaga przerwania reaguje tylko na zbocze)
-;-----------------------------------------------------------
+
+	;sbr		SysFlags, 1<<MeasCancel_f
 ;		rcall	usart_rx_write								;zapis danych do bufora (bez przerwaniowy)
 		;ldi		r16, '1'
 ;		sbis	LMX_pin,LMX_FOLD
@@ -163,14 +167,42 @@ rjmp mainloop
 ;zadania cykliczne
 ;-----------------------------------------------------------
 proc_15kHz:													;(15.625kHz)
-		cbr 	SysFlags, F15kHz_f
+		cbr 	SysFlags, 1<<F15kHz_f
 ;-------------------- usart RX -----------------------------
 		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
+#ifdef MULMASTER
+		rcall	usart_mulmasterTout							;automatyczne odlaczania nadajnika
+#endif
 ret
 proc_32Hz:
-		cbr 	SysFlags, 1<<F30Hz_f	
+		cbr 	SysFlags, 1<<F30Hz_f
+
+;------- zbuforowanie F zmierzonej w przerwnaniu -----------	
+		loadw 	r30,r31,freqRXub
+		storew	freqRX, r30,r31
+;-----------------------------------------------------------	
 		decrs	ScanActWaitC								;odlicza do zera czas
 		incrs	URXtoutC									;timeout usartRX inkrementuje do max
+
+#ifdef MULMASTER
+		decrs	MULmastTOtxinh								;czas blokowania wysylania asynchronicznego (blokuje cala procedure sprawdzania pomiarow czestotliwosci)
+#endif
+
+#ifdef PLL_ERROR_DET
+
+;-------------- pll error detector -------------------------
+		in 		r16,GIFR									;rozpoznawanie pll lock flaga przerwania (lesze od poolingu bo sie zatrzaskuje)
+		sbrs	r16,INTF0 
+		rjmp	FO_LF_0
+		sts		LOCKtimeC,zero								;jesli wykryto zbocze w jakims momencie (asynchronicznie)
+		ldi		r16, 1<<INTF0								;skasowanie flagi 
+		out		GIFR,r16
+FO_LF_0:
+		sbic	LMX_pin,LMX_FOLD
+		sts		LOCKtimeC,zero								;kasowanie flagi jesli stan wysoki pinu (flaga przerwania reaguje tylko na zbocze)
+;-----------------------------------------------------------
+
+
 ;-------------- pll error detektor -------------------------
 		ldi		r16,30
 		inc		lockPresc
@@ -198,9 +230,11 @@ proc_32Hz:
 		ldi 	r16,'!'
 		rcall	usartsend
 		rcall	lf_print
-;-----------------------------------------------------------
 wait_presc:
 ret2:
+;-----------------------------------------------------------
+#endif
+updwAcion_inProgr:
 ret
 
 ;===========================================================
@@ -239,10 +273,10 @@ no_over_bandH:
 #endif
 ;---
 		LDIWY 	SCAN_F_SHIFT
-		rcall	tune_offset
-		sti		ScanActWaitC,SCAN_REATEMPT					;czas na zatrzymanie skanowania	
-updwAcion_inProgr:
-ret
+		rjmp	tun_offs0
+		;rcall	tune_offset
+		;sti		ScanActWaitC,SCAN_REATEMPT					;czas na zatrzymanie skanowania	
+
 dwScan_Detected:
 		rcall 	usart_nl
 		ldi 	r16,'D'
@@ -348,7 +382,12 @@ freqAnalise:
 		rcall	dispFreq									;surowa czestotliwosc do dbg
 		;rcall	freqStabil_Detected
 #endif
-		
+;ret
+#ifdef	MULMASTER
+		lds		r16,MULmastTOtxinh
+		cpi		r16,0
+		brne	freqm_detached
+#endif
 		lds		r16,freqStabilC
 		cpi		r16,STAB_FREQ								;czas stabilnej czestotliwosci
 		brne	pc+2
@@ -472,6 +511,7 @@ sei
 		breq	noUp_scan
 		brlo	noUp_scan
 		rcall	upScan_Detected
+	;rjmp	noDw_scan
 noUp_scan:
 
 		cpw		r4,r5,r6,r7	
@@ -480,7 +520,7 @@ noUp_scan:
 		brsh	noDw_scan
 		rcall	dwScan_Detected
 noDw_scan:
-
+	;ret
 ;odczyt 16b czestotliwosci z bufora kolowego
 readFreq_DW:
 		ldiwz	FREQbuffer

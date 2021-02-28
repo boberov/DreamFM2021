@@ -97,8 +97,8 @@ USART_no_CharRX:
 
 reti
 ;-----------------------------------------------------------
-
 usart_rx_buffer:
+
 ;-------------------timeout--------------------------------
 		lds		r16,URXtoutC
 		cpi		r16,LF_Tout									;timeout z URXtoutC
@@ -106,13 +106,13 @@ usart_rx_buffer:
 ;----------------odbior klawiszy----------------------------															
 		lds		r19,URXpWR
 		lds		r20,URXpRD
-
 		cp		r19,r20
 		breq	nochar_in_buf	
+		sti 	MULmastTOtxinh,MULMASTER_RXTO
 		rcall	compare_string_buf							;tu jest ladowany adres do Z dla ijmp
 		brne	noma										;sprawdzany sreg, czy rozpoznany string z bufora
 		sts		URXpRD,r19
-nothesame_key:
+		clear	MULmastTOtxinh								;zezwolenie na nadawanie jesli rozkaz adresowany tutaj
 		icall	
 		ret
 noma:														;wszystko wyciagnieto z bufora
@@ -222,7 +222,7 @@ unequal:
 ret
 
 
-
+														
 ;-----------------------------------------------------------
 ;============== wykonywanie rozkazow =======================
 ;-----------------------------------------------------------
@@ -240,11 +240,12 @@ ret
 
 tx_enable:
 		sbic	LMX_port,RF_ENABLE							;jesli tx wlaczony nie wlaczaj ponownie
-		rjmp	ret2
+		rjmp	ret3
 
 		rcall	RFTX_enable
 		rcall 	usart_nl
 		rjmp	ok_string
+ret3:
 ret
 tx_power:
 		rcall	load_B

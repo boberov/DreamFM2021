@@ -44,7 +44,7 @@ fmeasure:
 		lsr		r17											;odrzucenie lsb wynik zliczania podzielony przez 2
 		ror 	r16
 
-		storew	freqRX+0,r16,r17
+		storew	freqRXub+0,r16,r17
 		sbr 	SysFlags, 1<<MeasReady_f
 meas_invalid:
 		oti		tcnt1h,0									;zapis 16b jest atomowy jesli h pierwszy
@@ -54,12 +54,12 @@ meas_invalid:
 
 	
 		sbr 	SysFlags, 1<<F30Hz_f						;flaga przerwania cnt0
+		cbr		SysFlags, 1<<MeasCancel_f					;kasuj flage niewaznego pomiaru
 		pop		r17
 ret00:
 		pop		r16
 
 
-		cbr		SysFlags, 1<<MeasCancel_f					;kasuj flage niewaznego pomiaru
 		out		sreg,r2
 
 reti
