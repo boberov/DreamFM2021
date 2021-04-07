@@ -6,8 +6,8 @@
 ;===========================================================
 
 .equ LF_CHAR			=10
-.equ LF_Tout			=int(3)						
-.equ FTAB_SIZE 			=6 									;ilosc wpisow w tablicy
+.equ LF_Tout			=int(3)								;3 = ~100ms 						
+.equ FTAB_SIZE 			=7 									;ilosc wpisow w tablicy
 
 code_table:
 /*
@@ -44,6 +44,8 @@ code_table:
 .dw tx_disable
 .db "TXon",0x00,0x00										
 .dw tx_enable
+.db "TXf?",0x00,0x00										;rozkaz powoduje zaladowanie do nadajnika aktualnie zmierzonej czestotliwosci i wysylke na usart tej informacji
+.dw tx_fask
 .db "TXpow",0x01											;odczytywany parametr na koncu ciagu o dlugosci od 1B
 .dw tx_power
 .db "TXfrq",0x01											;parametr moze miec 4 lub 5B 					
@@ -100,6 +102,7 @@ reti
 usart_rx_buffer:
 
 ;-------------------timeout--------------------------------
+		incrs	URXtoutC									;timeout usartRX inkrementuje do max
 		lds		r16,URXtoutC
 		cpi		r16,LF_Tout									;timeout z URXtoutC
 		brne	nochar_in_buf								;po odebraniu bajtu usartem czekany czas timeout zanim sciagany bufor
@@ -226,6 +229,10 @@ ret
 ;-----------------------------------------------------------
 ;============== wykonywanie rozkazow =======================
 ;-----------------------------------------------------------
+tx_fask:
+		rcall 	usart_nl
+		rcall	ok_string
+		rjmp	freqStabil_Detected
 tx_shdwn:
 		;rcall	RFTX_disable
 		rcall 	usart_nl

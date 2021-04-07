@@ -20,9 +20,10 @@ Rozpoznawane sa dwa rodzaje zachowanie sie sledzonej czestotliwosci
 
 /*
 	Obslugiwane rozkazy:
-	Odebranie usartem rozkazu 'TXon' zalacza nadajnik (po starcie jest domyslnie wylaczony)
+	Odebranie usartem rozkazu 'TXon' zalacza nadajnik (jesli po starcie jest domyslnie wylaczony)
 	Rozkaz 'TXoff' wylacza nadajnik (zasilanie LDO)
 	Rozkaz 'TXshd'	usypia calkowicie procek (generator kwarcowy wylaczony, wszystkie zasilania odlaczone)
+	Rozkaz 'TXf?' powoduje zaladowanie do nadajnika aktualnie zmierzonej czestotliwosci i wysylke na usart tej informacji
 
 	Rozkaz z parametrem 'TXpowXX' zmienia moc nadajnika X=00 - 03 (hex)
 	Rozkaz z parametrem 'TXdimXX' zmienia wartosc PWM X=00 - 80 (hex)
@@ -41,11 +42,11 @@ obsluga multi master usart, na wypadek kolizji, nie wysyla danych o freq na zada
 zmiany w czasach detekcji zmian czestotliwosci i dla skanowania
 pll err ino odlaczone bo nie zmiescilo sie juz
 */
-#define	DEFAULT_TXON
+;#define	DEFAULT_TXON
 #define MULMASTER						;odlacza TX po wyslaniu danych na czas MULMASTER_TXTO oraz uduchamia blokowanie nadawania asynchronicznego na czas MULMASTER_RXTO
 ;#define	PLL_ERROR_DET					;wysylanie asynchroniczne info ze PLL niezlapalo juz dlugi czas
 #define	MULMASTER_TXTO	10				;100 = ~10ms
-#define MULMASTER_RXTO 	6				;6 = ~100ms
+#define MULMASTER_RXTO 	3				;6 = ~100ms
 
 #define	DEFAULT_POWER	1										
 #define LF_ENDSTR						;https://www.loginradius.com/blog/async/eol-end-of-line-or-newline-characters/
@@ -60,7 +61,7 @@ pll err ino odlaczone bo nie zmiescilo sie juz
 
 ;#define OVER_BAND_RETU					;jesli skanowanie i blisko granicy to ustawia szybciej nadajnik na drugim koncu pasma
 ;#define FREQ_DBG						;wysylanie na usart aktualnie zmierzonej czestotliwosci (surowizna z jitterem duzym)
-;#define	SYM_HYST					;jesli histereza symetryczna wyniku pomiaru
+#define	SYM_HYST						;jesli histereza symetryczna wyniku pomiaru
 #define SCAN_F_SHIFT	1				;x100kHz przesuniecie instalacji nadajnika
 #define SCAN_REATEMPT	80				;co jaki czas ponowic ustawienie czetotliwosci TX
 #define STAB_FREQ		80				;po jakim czasie uznac zmierzona F za stabilna (30=1sek)
@@ -168,22 +169,19 @@ rjmp mainloop
 ;-----------------------------------------------------------
 proc_15kHz:													;(15.625kHz)
 		cbr 	SysFlags, 1<<F15kHz_f
-;-------------------- usart RX -----------------------------
-		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
 #ifdef MULMASTER
 		rcall	usart_mulmasterTout							;automatyczne odlaczania nadajnika
 #endif
 ret
 proc_32Hz:
 		cbr 	SysFlags, 1<<F30Hz_f
-
+;-------------------- usart RX -----------------------------
+		rcall	usart_rx_buffer								;odbior danych z bufora usartu i wykonywanie zadania
 ;------- zbuforowanie F zmierzonej w przerwnaniu -----------	
 		loadw 	r30,r31,freqRXub
 		storew	freqRX, r30,r31
 ;-----------------------------------------------------------	
 		decrs	ScanActWaitC								;odlicza do zera czas
-		incrs	URXtoutC									;timeout usartRX inkrementuje do max
-
 #ifdef MULMASTER
 		decrs	MULmastTOtxinh								;czas blokowania wysylania asynchronicznego (blokuje cala procedure sprawdzania pomiarow czestotliwosci)
 #endif
@@ -234,7 +232,6 @@ wait_presc:
 ret2:
 ;-----------------------------------------------------------
 #endif
-updwAcion_inProgr:
 ret
 
 ;===========================================================
@@ -313,6 +310,7 @@ no_over_bandL:
 tun_offs0:
 		rcall	tune_offset
 		sti		ScanActWaitC,SCAN_REATEMPT
+updwAcion_inProgr:
 ret
 
 ;f stabilna sprawdz czy poprawna jest ustawiona f nadajnika
